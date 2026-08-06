@@ -13,9 +13,6 @@ macos.release    = "bin/universal-apple-darwin/libgodot_wry.framework"
 windows.debug.x86_64   = "bin/x86_64-pc-windows-msvc/godot_wry.dll"
 windows.release.x86_64 = "bin/x86_64-pc-windows-msvc/godot_wry.dll"
 
-[icons]
-WebView = "icons/webview.svg"
-
 [dependencies]
 
 macos.debug = {

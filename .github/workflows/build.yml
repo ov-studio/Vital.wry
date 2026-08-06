@@ -45,19 +45,6 @@ jobs:
       - name: Build binaries
         run: just ${{ matrix.platform.target == 'universal-apple-darwin' && 'build-macos-universal' || 'build' }}
 
-      - name: Code sign and notarize library
-        if: ${{ matrix.platform.runs-on == 'macos-latest' && github.ref == 'refs/heads/main' }}
-        env:
-          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-          APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
-          APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
-          APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
-          APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
-        run: |
-          brew install powershell
-          pwsh ./scripts/ci_sign_macos.ps1 godot/addons/godot_wry/bin/universal-apple-darwin/libgodot_wry.framework
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

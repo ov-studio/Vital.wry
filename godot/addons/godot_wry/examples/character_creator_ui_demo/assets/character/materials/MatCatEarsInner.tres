@@ -1,7 +1,0 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://bp0cmciu0n7bj"]
-
-[resource]
-resource_name = "MatCatEarsInner"
-cull_mode = 2
-albedo_color = Color(0.838001, 0.478198, 0.906729, 1)
-roughness = 0.5

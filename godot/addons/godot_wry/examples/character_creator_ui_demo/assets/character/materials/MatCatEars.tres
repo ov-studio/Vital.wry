@@ -1,7 +1,0 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://dxpi8mrqyuub1"]
-
-[resource]
-resource_name = "MatCatEars"
-cull_mode = 2
-albedo_color = Color(0.906335, 0.520675, 0.715937, 1)
-roughness = 0.5

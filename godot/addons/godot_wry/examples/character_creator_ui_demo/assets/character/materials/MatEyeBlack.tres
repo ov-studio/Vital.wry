@@ -1,6 +1,0 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://dm6lxns21d7ys"]
-
-[resource]
-resource_name = "MatEyeBlack"
-cull_mode = 2
-albedo_color = Color(0, 0, 0, 1)

@@ -1,7 +1,0 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://ujhvr562ptav"]
-
-[resource]
-resource_name = "MatNose"
-cull_mode = 2
-albedo_color = Color(0.906501, 0.534787, 0.490865, 1)
-roughness = 0.5

@@ -1,7 +1,0 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://dv2n32dg3k6ro"]
-
-[resource]
-resource_name = "MatHat"
-cull_mode = 2
-albedo_color = Color(0.145562, 0.096609, 0.112766, 1)
-roughness = 0.774611

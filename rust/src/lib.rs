@@ -692,26 +692,6 @@ impl WebView {
         self.apply_z_order();
     }
 
-    #[func]
-    fn bring_to_front(&mut self) {
-        let max_z = self.get_sibling_webviews()
-            .into_iter()
-            .map(|wv| wv.bind().window_z_index)
-            .max()
-            .unwrap_or(self.window_z_index);
-        self.set_window_z_index(max_z + 1);
-    }
-
-    #[func]
-    fn send_to_back(&mut self) {
-        let min_z = self.get_sibling_webviews()
-            .into_iter()
-            .map(|wv| wv.bind().window_z_index)
-            .min()
-            .unwrap_or(self.window_z_index);
-        self.set_window_z_index(min_z - 1);
-    }
-
     fn get_sibling_webviews(&self) -> Vec<Gd<WebView>> {
         let mut siblings: Vec<Gd<WebView>> = Vec::new();
         if let Some(tree) = self.base().get_tree_or_null() {

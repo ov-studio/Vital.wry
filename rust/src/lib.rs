@@ -172,7 +172,6 @@ impl WebView {
     #[signal]
     fn page_load_finished(message: GString);
 
-    #[func]
     fn update_webview(&mut self) {
         if self.webview.is_none() {
             return;

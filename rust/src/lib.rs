@@ -25,7 +25,7 @@ use {
     raw_window_handle::{HasWindowHandle, RawWindowHandle},
     windows::Win32::Foundation::HWND,
     windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrA, SetWindowLongPtrA, SetWindowPos,
+        EnumChildWindows, GetWindowLongPtrA, SetWindowLongPtrA, SetWindowPos,
         GWL_STYLE, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
     },
     wry::WebViewExtWindows,
@@ -458,18 +458,23 @@ impl WebView {
             self.webview_hwnd = Some(webview.hwnd().0 as isize);
 
             if self.overlay {
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    GetWindowLongPtrA, SetWindowLongPtrA, GWL_EXSTYLE,
-                    WS_EX_LAYERED, WS_EX_TRANSPARENT,
-                };
-                let hwnd = HWND(self.webview_hwnd.unwrap() as _);
+                use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_DISABLED};
+
+                unsafe extern "system" fn disable_child(
+                    hwnd: HWND,
+                    _lparam: windows::Win32::Foundation::LPARAM,
+                ) -> windows::core::BOOL {
+                    use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_DISABLED};
+                    let style = GetWindowLongPtrA(hwnd, GWL_STYLE);
+                    SetWindowLongPtrA(hwnd, GWL_STYLE, style | WS_DISABLED.0 as isize);
+                    windows::core::BOOL(1)
+                }
+
+                let root_hwnd = HWND(self.webview_hwnd.unwrap() as _);
                 unsafe {
-                    let ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
-                    SetWindowLongPtrA(
-                        hwnd,
-                        GWL_EXSTYLE,
-                        ex_style | WS_EX_LAYERED.0 as isize | WS_EX_TRANSPARENT.0 as isize,
-                    );
+                    let style = GetWindowLongPtrA(root_hwnd, GWL_STYLE);
+                    SetWindowLongPtrA(root_hwnd, GWL_STYLE, style | WS_DISABLED.0 as isize);
+                    let _ = EnumChildWindows(Some(root_hwnd), Some(disable_child), windows::Win32::Foundation::LPARAM(0));
                 }
             }
         }

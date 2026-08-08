@@ -561,7 +561,6 @@ impl WebView {
         self.resize()
     }
 
-    #[func]
     fn create_webview(&mut self) {
         self.build_webview();
         if self.webview.is_none() {

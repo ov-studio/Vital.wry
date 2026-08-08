@@ -79,8 +79,6 @@ struct WebView {
     #[export]
     focused_when_created: bool,
     #[export]
-    forward_input_events: bool,
-    #[export]
     autoplay: bool,
     // Named webview_z_index to avoid collision with Godot's built-in Control.z_index
     // and to avoid the GodotClass macro generating a conflicting set_webview_z_index.
@@ -115,7 +113,6 @@ impl IControl for WebView {
             clipboard: true,
             incognito: false,
             focused_when_created: true,
-            forward_input_events: true,
             autoplay: false,
             webview_z_index: 0,
             webview_hwnd: None,
@@ -462,84 +459,6 @@ impl WebView {
             .with_custom_protocol(
                 "res".into(), move |_webview_id, request| get_res_response(request),
             );
-
-        let webview_builder = if self.forward_input_events {
-            webview_builder.with_initialization_script(r#"
-                document.addEventListener('mousemove', (e) => {
-                    if (!document.hasFocus()) return;
-                    window.ipc.postMessage(JSON.stringify({
-                        type: '_mouse_move',
-                        x: e.clientX,
-                        y: e.clientY,
-                        movementX: e.movementX,
-                        movementY: e.movementY,
-                        button: e.button
-                    }));
-                });
-                document.addEventListener('mousedown', (e) => {
-                    if (!document.hasFocus()) return;
-                    window.ipc.postMessage(JSON.stringify({
-                        type: '_mouse_down',
-                        x: e.clientX,
-                        y: e.clientY,
-                        button: e.button
-                    }));
-                });
-                document.addEventListener('mouseup', (e) => {
-                    if (!document.hasFocus()) return;
-                    window.ipc.postMessage(JSON.stringify({
-                        type: '_mouse_up',
-                        x: e.clientX,
-                        y: e.clientY,
-                        button: e.button
-                    }));
-                });
-                document.addEventListener('wheel', (e) => {
-                    if (!document.hasFocus()) return;
-                    window.ipc.postMessage(JSON.stringify({
-                        type: '_mouse_wheel',
-                        x: e.clientX,
-                        y: e.clientY,
-                        deltaX: e.deltaX,
-                        deltaY: e.deltaY,
-                        shift: e.shiftKey,
-                        ctrl: e.ctrlKey,
-                        alt: e.altKey,
-                        meta: e.metaKey
-                    }));
-                });
-                document.addEventListener('keydown', (e) => {
-                    if (!document.hasFocus()) return;
-                    const isModifier = ["Alt", "Shift", "Control", "Meta"].includes(e.key);
-                    window.ipc.postMessage(JSON.stringify({
-                        type: '_key_down',
-                        key: e.key,
-                        code: e.code,
-                        keyCode: e.keyCode,
-                        shift: isModifier ? false : e.shiftKey,
-                        ctrl: isModifier ? false : e.ctrlKey,
-                        alt: isModifier ? false : e.altKey,
-                        meta: isModifier ? false : e.metaKey
-                    }));
-                });
-                document.addEventListener('keyup', (e) => {
-                    if (!document.hasFocus()) return;
-                    const isModifier = ["Alt", "Shift", "Control", "Meta"].includes(e.key);
-                    window.ipc.postMessage(JSON.stringify({
-                        type: '_key_up',
-                        key: e.key,
-                        code: e.code,
-                        keyCode: e.keyCode,
-                        shift: isModifier ? false : e.shiftKey,
-                        ctrl: isModifier ? false : e.ctrlKey,
-                        alt: isModifier ? false : e.altKey,
-                        meta: isModifier ? false : e.metaKey
-                    }));
-                });
-            "#)
-        } else {
-            webview_builder
-        };
 
         if !self.url.is_empty() && !self.html.is_empty() {
             godot_error!("[Godot WRY] You have entered both a URL and HTML code. You may only enter one at a time.")

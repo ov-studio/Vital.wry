@@ -52,6 +52,12 @@ struct WebView {
     previous_viewport_size: Vector2i,
     previous_window_position: Vector2i,
     previous_content_scale_factor: f32,
+    // Named window_z_index to avoid collision with Godot's built-in Control.z_index.
+    // Exposed to the editor Inspector via #[export], with a custom get/set so
+    // changing it also triggers apply_z_order().
+    #[export]
+    #[var(get = get_window_z_index, set = set_window_z_index)]
+    window_z_index: i32,
     #[export]
     full_window_size: bool,
     #[export]
@@ -80,11 +86,6 @@ struct WebView {
     focused_when_created: bool,
     #[export]
     autoplay: bool,
-    // Named webview_z_index to avoid collision with Godot's built-in Control.z_index
-    // and to avoid the GodotClass macro generating a conflicting set_webview_z_index.
-    // Exposed as a Godot property via #[var] with explicit get/set.
-    #[var(get = get_webview_z_index, set = set_webview_z_index)]
-    webview_z_index: i32,
     // Cached child HWND for this WebView (Windows only). Populated after webview creation.
     webview_hwnd: Option<isize>,
 }
@@ -100,6 +101,7 @@ impl IControl for WebView {
             previous_viewport_size: Vector2i::default(),
             previous_window_position: Vector2i::default(),
             previous_content_scale_factor: 1.0,
+            window_z_index: 0,
             full_window_size: true,
             url: "".into(),
             html: "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>html,body{margin:0;padding:0;background:transparent}</style></head><body></body></html>".into(),
@@ -114,7 +116,6 @@ impl IControl for WebView {
             incognito: false,
             focused_when_created: true,
             autoplay: false,
-            webview_z_index: 0,
             webview_hwnd: None,
         }
     }
@@ -703,16 +704,16 @@ impl WebView {
 
     /// Get the webview stacking order. Higher = on top of lower-valued WebViews.
     #[func]
-    fn get_webview_z_index(&self) -> i32 {
-        self.webview_z_index
+    fn get_window_z_index(&self) -> i32 {
+        self.window_z_index
     }
 
     /// Set the webview stacking order. Higher values appear in front of lower ones.
     /// On Windows: calls SetWindowPos to restack all sibling WebView HWNDs.
     /// On macOS / Linux: no-op for now.
     #[func]
-    fn set_webview_z_index(&mut self, value: i32) {
-        self.webview_z_index = value;
+    fn set_window_z_index(&mut self, value: i32) {
+        self.window_z_index = value;
         self.apply_z_order();
     }
 
@@ -722,10 +723,10 @@ impl WebView {
         // Find the highest z_index among siblings and go one above it.
         let max_z = self.get_sibling_webviews()
             .into_iter()
-            .map(|wv| wv.bind().webview_z_index)
+            .map(|wv| wv.bind().window_z_index)
             .max()
-            .unwrap_or(self.webview_z_index);
-        self.set_webview_z_index(max_z + 1);
+            .unwrap_or(self.window_z_index);
+        self.set_window_z_index(max_z + 1);
     }
 
     /// Send this WebView below all sibling WebViews in the same window.
@@ -733,10 +734,10 @@ impl WebView {
     fn send_to_back(&mut self) {
         let min_z = self.get_sibling_webviews()
             .into_iter()
-            .map(|wv| wv.bind().webview_z_index)
+            .map(|wv| wv.bind().window_z_index)
             .min()
-            .unwrap_or(self.webview_z_index);
-        self.set_webview_z_index(min_z - 1);
+            .unwrap_or(self.window_z_index);
+        self.set_window_z_index(min_z - 1);
     }
 
     /// Collect all other WebView nodes that share the same parent Godot window,
@@ -759,7 +760,7 @@ impl WebView {
                 }
             }
         }
-        siblings.sort_by_key(|wv| wv.bind().webview_z_index);
+        siblings.sort_by_key(|wv| wv.bind().window_z_index);
         siblings
     }
 
@@ -771,11 +772,11 @@ impl WebView {
 
         // Add siblings.
         for wv in self.get_sibling_webviews() {
-            let z = wv.bind().webview_z_index;
+            let z = wv.bind().window_z_index;
             all.push((z, Some(wv)));
         }
         // Add self (no Gd<> handle needed — we apply via our own webview below).
-        all.push((self.webview_z_index, None));
+        all.push((self.window_z_index, None));
         all.sort_by_key(|(z, _)| *z);
 
         #[cfg(target_os = "windows")]

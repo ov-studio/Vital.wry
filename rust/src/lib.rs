@@ -13,7 +13,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
-use wry::{WebViewBuilder, WebContext, Rect, WebViewAttributes, PageLoadEvent};
+use wry::{WebViewBuilder, WebContext, Rect, PageLoadEvent};
 use wry::dpi::{PhysicalPosition, PhysicalSize};
 use wry::http::Request;
 
@@ -24,7 +24,10 @@ use crate::protocols::get_res_response;
 use {
     raw_window_handle::{HasWindowHandle, RawWindowHandle},
     windows::Win32::Foundation::HWND,
-    windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrA, SetWindowLongPtrA, GWL_STYLE},
+    windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrA, SetWindowLongPtrA, SetWindowPos,
+        GWL_STYLE, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
+    },
     wry::WebViewExtWindows,
 };
 
@@ -64,7 +67,7 @@ struct WebView {
     #[export]
     devtools: bool,
     #[export]
-    headers: Dictionary,
+    headers: VarDictionary,
     #[export]
     user_agent: GString,
     #[export]
@@ -79,6 +82,13 @@ struct WebView {
     forward_input_events: bool,
     #[export]
     autoplay: bool,
+    // Named webview_z_index to avoid collision with Godot's built-in Control.z_index
+    // and to avoid the GodotClass macro generating a conflicting set_webview_z_index.
+    // Exposed as a Godot property via #[var] with explicit get/set.
+    #[var(get = get_webview_z_index, set = set_webview_z_index)]
+    webview_z_index: i32,
+    // Cached child HWND for this WebView (Windows only). Populated after webview creation.
+    webview_hwnd: Option<isize>,
 }
 
 #[godot_api]
@@ -99,7 +109,7 @@ impl IControl for WebView {
             transparent: false,
             background_color: Color::from_rgb(1.0, 1.0, 1.0),
             devtools: true,
-            headers: Dictionary::new(),
+            headers: VarDictionary::new(),
             user_agent: "".into(),
             zoom_hotkeys: false,
             clipboard: true,
@@ -107,6 +117,8 @@ impl IControl for WebView {
             focused_when_created: true,
             forward_input_events: true,
             autoplay: false,
+            webview_z_index: 0,
+            webview_hwnd: None,
         }
     }
 
@@ -169,7 +181,7 @@ impl WebView {
         let viewport_size = self.base().get_window()
             .map(|w| w.get_size())
             .unwrap_or_else(|| {
-                self.base().get_tree().expect("Could not get tree")
+                self.base().get_tree()
                     .get_root().expect("Could not get viewport").get_size()
             });
         let window_position = DisplayServer::singleton().window_get_position_ex().window_id(self.window_id).done();
@@ -198,7 +210,7 @@ impl WebView {
 
     fn build_webview(&mut self) {
         let display_server = DisplayServer::singleton();
-        if display_server.get_name() == "headless".into()
+        if display_server.get_name() == "headless"
         {
             godot_warn!("Godot WRY: Headless mode detected. webview will not be created.");
             return;
@@ -257,22 +269,32 @@ impl WebView {
             None
         };
         let mut context = WebContext::new(resolved_data_directory);
-        let webview_builder = WebViewBuilder::with_attributes(WebViewAttributes {
-            context: Some(&mut context),
-            url: if self.html.is_empty() { Some(String::from(&self.url)) } else { None },
-            html: if self.url.is_empty() { Some(String::from(&self.html)) } else { None },
-            transparent: self.transparent,
-            devtools: self.devtools,
-            // headers: Some(HeaderMap::try_from(self.headers.iter_shared().typed::<GString, Variant>()).unwrap_or_default()),
-            user_agent: Some(String::from(&self.user_agent)),
-            zoom_hotkeys_enabled: self.zoom_hotkeys,
-            clipboard: self.clipboard,
-            incognito: self.incognito,
-            focused: self.focused_when_created,
-            autoplay: self.autoplay,
-            accept_first_mouse: true,
-            ..Default::default()
-        })
+        // wry 0.56 removed `WebViewBuilder::with_attributes` in favor of a fluent
+        // builder API — construct via `new_with_web_context` and chain `with_*`
+        // setters instead of building a `WebViewAttributes` struct literal.
+        let mut webview_builder = WebViewBuilder::new_with_web_context(&mut context)
+            .with_transparent(self.transparent)
+            .with_devtools(self.devtools)
+            // .with_headers(HeaderMap::try_from(self.headers.iter_shared().typed::<GString, Variant>()).unwrap_or_default())
+            .with_user_agent(String::from(&self.user_agent))
+            .with_hotkeys_zoom(self.zoom_hotkeys)
+            .with_clipboard(self.clipboard)
+            .with_incognito(self.incognito)
+            .with_focused(self.focused_when_created)
+            .with_autoplay(self.autoplay)
+            .with_accept_first_mouse(true);
+
+        // Preserves the original url/html precedence: url is set unless html was
+        // provided, and html is set unless url was provided (if both are set the
+        // godot_error! below warns the user; neither wins here, same as before).
+        if self.html.is_empty() {
+            webview_builder = webview_builder.with_url(String::from(&self.url));
+        }
+        if self.url.is_empty() {
+            webview_builder = webview_builder.with_html(String::from(&self.html));
+        }
+
+        let webview_builder = webview_builder
             .with_ipc_handler({
                 let base = Arc::clone(&base);
                 move |req: Request<String>| {
@@ -525,6 +547,16 @@ impl WebView {
         }
 
         let webview = webview_builder.build_as_child(&window).unwrap();
+
+        #[cfg(target_os = "windows")]
+        {
+            // wry >= 0.51 exposes the child HWND that hosts the WebView2 control
+            // directly via WebViewExtWindows::hwnd(), so we no longer need to
+            // manually EnumChildWindows-walk looking for a "Chrome_WidgetWin_0"
+            // class (which also broke against windows-0.61's HWND(*mut c_void)).
+            self.webview_hwnd = Some(webview.hwnd().0 as isize);
+        }
+
         self.webview.replace(webview);
 
         self.resize()
@@ -537,7 +569,7 @@ impl WebView {
             return;
         }
 
-        let mut viewport = self.base().get_tree().expect("Could not get tree").get_root().expect("Could not get viewport");
+        let mut viewport = self.base().get_tree().get_root().expect("Could not get viewport");
         viewport.connect("size_changed", &Callable::from_object_method(&*self.base(), "resize"));
 
         self.base().clone().connect("resized", &Callable::from_object_method(&*self.base(), "resize"));
@@ -590,7 +622,7 @@ impl WebView {
                 let window_size = self.base().get_window()
                     .map(|w| w.get_size())
                     .unwrap_or_else(|| {
-                        self.base().get_tree().expect("Could not get tree")
+                        self.base().get_tree()
                             .get_root().expect("Could not get viewport").get_size()
                     });
                 Rect {
@@ -749,6 +781,126 @@ impl WebView {
     fn zoom(&self, scale_factor: f64) {
         if let Some(webview) = &self.webview {
             let _ = webview.zoom(scale_factor);
+        }
+    }
+
+    /// Get the webview stacking order. Higher = on top of lower-valued WebViews.
+    #[func]
+    fn get_webview_z_index(&self) -> i32 {
+        self.webview_z_index
+    }
+
+    /// Set the webview stacking order. Higher values appear in front of lower ones.
+    /// On Windows: calls SetWindowPos to restack all sibling WebView HWNDs.
+    /// On macOS / Linux: no-op for now.
+    #[func]
+    fn set_webview_z_index(&mut self, value: i32) {
+        self.webview_z_index = value;
+        self.apply_z_order();
+    }
+
+    /// Bring this WebView above all sibling WebViews in the same window.
+    #[func]
+    fn bring_to_front(&mut self) {
+        // Find the highest z_index among siblings and go one above it.
+        let max_z = self.get_sibling_webviews()
+            .into_iter()
+            .map(|wv| wv.bind().webview_z_index)
+            .max()
+            .unwrap_or(self.webview_z_index);
+        self.set_webview_z_index(max_z + 1);
+    }
+
+    /// Send this WebView below all sibling WebViews in the same window.
+    #[func]
+    fn send_to_back(&mut self) {
+        let min_z = self.get_sibling_webviews()
+            .into_iter()
+            .map(|wv| wv.bind().webview_z_index)
+            .min()
+            .unwrap_or(self.webview_z_index);
+        self.set_webview_z_index(min_z - 1);
+    }
+
+    /// Collect all other WebView nodes that share the same parent Godot window,
+    /// sorted ascending by their current z_index.
+    fn get_sibling_webviews(&self) -> Vec<Gd<WebView>> {
+        let mut siblings: Vec<Gd<WebView>> = Vec::new();
+        if let Some(tree) = self.base().get_tree_or_null() {
+            if let Some(root) = tree.get_root() {
+                let all_webviews = root.find_children_ex("*").type_("WebView").owned(false).done();
+                for i in 0..all_webviews.len() {
+                    let node = all_webviews.get(i);
+                    if let Some(node) = node {
+                    if let Ok(wv) = node.try_cast::<WebView>() {
+                        // skip ourselves
+                        if wv.instance_id() != self.base().instance_id() {
+                            siblings.push(wv);
+                        }
+                    }
+                    }
+                }
+            }
+        }
+        siblings.sort_by_key(|wv| wv.bind().webview_z_index);
+        siblings
+    }
+
+    /// Apply the current z_index ordering of all WebViews in this window
+    /// by re-stacking their native child windows from lowest to highest.
+    fn apply_z_order(&self) {
+        // Build the full sorted list (siblings + self).
+        let mut all: Vec<(i32, Option<Gd<WebView>>)> = Vec::new();
+
+        // Add siblings.
+        for wv in self.get_sibling_webviews() {
+            let z = wv.bind().webview_z_index;
+            all.push((z, Some(wv)));
+        }
+        // Add self (no Gd<> handle needed — we apply via our own webview below).
+        all.push((self.webview_z_index, None));
+        all.sort_by_key(|(z, _)| *z);
+
+        #[cfg(target_os = "windows")]
+        {
+            // Stack from bottom (HWND_BOTTOM first), then place each subsequent
+            // one above the previous via the sibling parameter of SetWindowPos.
+            // We iterate low → high so each call puts the next HWND "above" all
+            // previously placed ones. The simplest correct approach: place the
+            // lowest at HWND_BOTTOM, then each next one at HWND_TOP — this
+            // produces the right visual order because Windows stacks children
+            // in insertion order with HWND_TOP meaning "top of z-order".
+            for (_, maybe_wv) in &all {
+                let hwnd_opt: Option<HWND> = if let Some(wv) = maybe_wv {
+                    wv.bind().webview_hwnd.map(|h| HWND(h as _))
+                } else {
+                    self.webview_hwnd.map(|h| HWND(h as _))
+                };
+
+                if let Some(hwnd) = hwnd_opt {
+                    unsafe {
+                        // Place at bottom first; each successive call to HWND_TOP
+                        // raises it above the previous, so iterating low→high
+                        // leaves the highest z_index on top.
+                        let _ = SetWindowPos(
+                            hwnd,
+                            Some(HWND_TOP),
+                            0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
+                    }
+                }
+            }
+            // The loop above pushes each to TOP in ascending z order, so the
+            // last one (highest z_index) ends up on top — correct.
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // macOS / Linux: no-op for now.
+            // macOS: use `webview.ns_window()` + objc2 NSView ordering APIs.
+            // Linux/X11: use gdk_window_raise() / gdk_window_lower().
+            let _ = all;
         }
     }
 }

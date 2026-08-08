@@ -81,6 +81,8 @@ struct WebView {
     focused_when_created: bool,
     #[export]
     autoplay: bool,
+    #[export]
+    overlay: bool,
     webview_hwnd: Option<isize>,
 }
 
@@ -110,6 +112,7 @@ impl IControl for WebView {
             incognito: false,
             focused_when_created: true,
             autoplay: false,
+            overlay: false,
             webview_hwnd: None,
         }
     }
@@ -453,6 +456,22 @@ impl WebView {
         #[cfg(target_os = "windows")]
         {
             self.webview_hwnd = Some(webview.hwnd().0 as isize);
+
+            if self.overlay {
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetWindowLongPtrA, SetWindowLongPtrA, GWL_EXSTYLE,
+                    WS_EX_LAYERED, WS_EX_TRANSPARENT,
+                };
+                let hwnd = HWND(self.webview_hwnd.unwrap() as _);
+                unsafe {
+                    let ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
+                    SetWindowLongPtrA(
+                        hwnd,
+                        GWL_EXSTYLE,
+                        ex_style | WS_EX_LAYERED.0 as isize | WS_EX_TRANSPARENT.0 as isize,
+                    );
+                }
+            }
         }
 
         self.webview.replace(webview);

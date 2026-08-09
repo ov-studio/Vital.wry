@@ -1,67 +1,64 @@
-on:
-  push:
-    branches: main
-    paths-ignore:
-      - "**.md"
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches: main
-
 name: 🤖 GDExtension
 
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
-  build:
-    name: 🏗️ Build / ${{ matrix.platform.os-name }}
-    strategy:
-      matrix:
-        platform:
-          - os-name: 🐧 Linux (64-bit)
-            runs-on: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            folder: linux
-          - os-name: 🍎 macOS (Universal)
-            runs-on: macos-latest
-            target: universal-apple-darwin
-            folder: macos
-          - os-name: 🪟 Windows (64-bit)
-            runs-on: windows-latest
-            target: x86_64-pc-windows-msvc
-            folder: windows
-    runs-on: ${{ matrix.platform.runs-on }}
+  # ── Build: Windows ──────────────────────────────────────────────────────────
+  build-windows:
+    name: 🏗️ Build / 🪟 Windows (64-bit)
+    runs-on: windows-latest
+    timeout-minutes: 180
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Linux dependencies
-        if: ${{ matrix.platform.runs-on == 'ubuntu-latest' }}
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev libjavascriptcoregtk-4.1-dev
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        if: ${{ matrix.platform.runs-on != 'windows-latest' }} # Windows uses the system Rust
         with:
-          targets: ${{ matrix.platform.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.platform.target }}
+          targets: x86_64-pc-windows-msvc
 
       - name: Install Just
         uses: extractions/setup-just@v1
 
       - name: Build binaries (release)
-        run: just ${{ matrix.platform.target == 'universal-apple-darwin' && 'build-macos-universal' || 'build' }} release
+        run: just build release
 
       - name: Build binaries (debug)
-        run: just ${{ matrix.platform.target == 'universal-apple-darwin' && 'build-macos-universal' || 'build' }} debug
+        run: just build debug
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.folder }}
+          name: windows
           path: |
-            .build/${{ matrix.platform.folder }}
+            .build/windows
 
+  # ── Build: Linux ────────────────────────────────────────────────────────────
+  # TODO: re-enable once Windows is confirmed working
+  # build-linux:
+  #   ...
+
+  # ── Build: macOS ────────────────────────────────────────────────────────────
+  # TODO: re-enable once Windows is confirmed working
+  # build-macos:
+  #   ...
+
+  # ── Package ─────────────────────────────────────────────────────────────────
   zip:
     name: 📦 Package
-    needs: build
+    needs: build-windows
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,16 +68,14 @@ jobs:
         with:
           path: .build
 
-      - name: Clean files
+      - name: Package artifacts
         run: |
           mkdir -p package/vital.wry
           cp .build/vital.wry.gdextension package/vital.wry/vital.wry.gdextension
-          mv .build/linux .build/macos .build/windows package/vital.wry/
+          mv .build/windows package/vital.wry/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vital.wry
           path: package
-
-  #TODO: release:

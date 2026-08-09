@@ -1,17 +1,11 @@
-target/
-.idea/
-.build/
-
-# Godot 4+ specific ignores
+# Builds
+.vs/
+.vscode/
+.conan/
+.vcpkg/
 .godot/
-
-# Godot-specific ignores
-.import/
-export.cfg
-export_presets.cfg
-
-# Imported translations (automatically generated from CSV files)
-*.translation
-
-dist/
-.DS_Store
+.build/
+.bin/
+.dist/
+.build_*
+target/

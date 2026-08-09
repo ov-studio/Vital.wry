@@ -56,7 +56,7 @@ jobs:
         with:
           name: ${{ matrix.platform.folder }}
           path: |
-            godot/addons/godot_wry/${{ matrix.platform.folder }}
+            .build/${{ matrix.platform.folder }}
 
   zip:
     name: 📦 Package
@@ -69,17 +69,18 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          path: godot/addons/godot_wry
+          path: .build
 
       - name: Clean files
         run: |
-          mkdir -p package/godot_wry
-          mv godot/addons package/godot_wry
+          mkdir -p package/vital.wry
+          cp .build/WRY.gdextension package/vital.wry/WRY.gdextension
+          mv .build/linux .build/macos .build/windows package/vital.wry/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot_wry
+          name: vital.wry
           path: package
 
   #TODO: release:

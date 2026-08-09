@@ -30,15 +30,15 @@ _build-windows profile:
 
 _copy-to-build-macos profile:
 	mkdir -p ../.build/macos
-	cp ./target/{{target}}/{{profile}}/libgodot_wry.dylib ../.build/macos/vital.wry.{{profile}}.dylib
+	cp ../.bin/{{target}}/{{profile}}/libgodot_wry.dylib ../.build/macos/vital.wry.{{profile}}.dylib
 
 _copy-to-build-linux profile:
 	mkdir -p ../.build/linux
-	cp ./target/{{target}}/{{profile}}/libgodot_wry.so ../.build/linux/vital.wry.{{profile}}.x86_64.so
+	cp ../.bin/{{target}}/{{profile}}/libgodot_wry.so ../.build/linux/vital.wry.{{profile}}.x86_64.so
 
 _copy-to-build-windows profile:
 	mkdir -p ../.build/windows
-	cp ./target/{{target}}/{{profile}}/godot_wry.dll ../.build/windows/vital.wry.{{profile}}.x86_64.dll
+	cp ../.bin/{{target}}/{{profile}}/godot_wry.dll ../.build/windows/vital.wry.{{profile}}.x86_64.dll
 
 build-all: build-macos-universal build-linux build-windows
 
@@ -46,10 +46,10 @@ build-macos-universal profile="release":
 	@echo "Building universal macOS binary ({{profile}})..."
 	cargo build --target aarch64-apple-darwin {{ if profile == "release" { "--release" } else { "" } }}
 	cargo build --target x86_64-apple-darwin {{ if profile == "release" { "--release" } else { "" } }}
-	mkdir -p ./target/{{profile}}
-	lipo -create -output ./target/{{profile}}/libgodot_wry.dylib ./target/aarch64-apple-darwin/{{profile}}/libgodot_wry.dylib ./target/x86_64-apple-darwin/{{profile}}/libgodot_wry.dylib
+	mkdir -p ../.bin/{{profile}}
+	lipo -create -output ../.bin/{{profile}}/libgodot_wry.dylib ../.bin/aarch64-apple-darwin/{{profile}}/libgodot_wry.dylib ../.bin/x86_64-apple-darwin/{{profile}}/libgodot_wry.dylib
 	mkdir -p ../.build/macos
-	cp ./target/{{profile}}/libgodot_wry.dylib ../.build/macos/vital.wry.{{profile}}.dylib
+	cp ../.bin/{{profile}}/libgodot_wry.dylib ../.build/macos/vital.wry.{{profile}}.dylib
 
 build-linux profile="release":
 	@echo "Building for Linux ({{profile}})..."

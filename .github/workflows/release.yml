@@ -45,7 +45,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: .build
+          path: ${{ github.workspace }}/.build
           if-no-files-found: error
 
   # ── Build: Linux ────────────────────────────────────────────────────────────

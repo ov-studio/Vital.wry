@@ -14,7 +14,6 @@ env:
 jobs:
   # ── Build: Windows ──────────────────────────────────────────────────────────
   build-windows:
-    name: 🏗️ Build / 🪟 Windows (64-bit)
     runs-on: windows-latest
     timeout-minutes: 180
 
@@ -40,8 +39,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: |
-            .build/windows
+          path: .build/windows
 
   # ── Build: Linux ────────────────────────────────────────────────────────────
   # TODO: re-enable once Windows is confirmed working
@@ -53,10 +51,9 @@ jobs:
   # build-macos:
   #   ...
 
-  # ── Package ─────────────────────────────────────────────────────────────────
-  zip:
-    name: 📦 Package
-    needs: build-windows
+  # ── Release: Collect & Publish ──────────────────────────────────────────────
+  release:
+    needs: [build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -66,16 +63,37 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          path: .build
+          path: collected/
+
+      - name: Debug collected structure
+        run: |
+          echo "=== collected/ structure ==="
+          find collected/ -maxdepth 3 | sort
 
       - name: Package artifacts
         run: |
+          TAG="${{ github.ref_name }}"
+          if [ ! -d "collected" ] || [ -z "$(ls -A collected 2>/dev/null)" ]; then
+            echo "ERROR: No artifacts were downloaded"
+            exit 1
+          fi
           mkdir -p package/vital.wry
-          cp .build/vital.wry.gdextension package/vital.wry/vital.wry.gdextension
-          mv .build/windows package/vital.wry/
+          cp .github/vital.wry.gdextension package/vital.wry/vital.wry.gdextension 2>/dev/null || true
+          mv collected/windows package/vital.wry/
+          zip_name="Vital.wry-${TAG}-windows.zip"
+          (cd package && zip -r "${GITHUB_WORKSPACE}/${zip_name}" vital.wry/ \
+            --exclude "~*" \
+            --exclude "*.TMP" \
+            --exclude "*.tmp" \
+            --exclude "*.pdb")
+          echo "Packaged: $zip_name"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: vital.wry
-          path: package
+          tag_name:               ${{ github.ref_name }}
+          name:                   ${{ github.ref_name }}
+          generate_release_notes: true
+          draft:                  false
+          prerelease:             ${{ contains(github.ref_name, '-') }}
+          files: "*.zip"

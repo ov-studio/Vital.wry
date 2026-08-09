@@ -35,11 +35,18 @@ jobs:
       - name: Build binaries (debug)
         run: just build debug
 
+      - name: Debug build output
+        shell: bash
+        run: |
+          echo "=== .build/ structure ==="
+          find .build/ -type f | sort || echo "ERROR: .build is empty or missing"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: .build
+          if-no-files-found: error
 
   # ── Build: Linux ────────────────────────────────────────────────────────────
   # TODO: re-enable once Windows is confirmed working

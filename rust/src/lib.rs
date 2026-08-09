@@ -480,8 +480,8 @@ impl WebView {
         }
 
         self.webview.replace(webview);
-
-        self.resize()
+        self.resize();
+        self.apply_z_order();
     }
 
     fn create_webview(&mut self) {

@@ -38,8 +38,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows
-          path: .build/windows
+          name: dist
+          path: .build
 
   # ── Build: Linux ────────────────────────────────────────────────────────────
   # TODO: re-enable once Windows is confirmed working
@@ -57,10 +57,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download binaries
+      - name: Download all dist artifacts
         uses: actions/download-artifact@v4
         with:
           path: collected/
@@ -77,11 +74,8 @@ jobs:
             echo "ERROR: No artifacts were downloaded"
             exit 1
           fi
-          mkdir -p package/vital.wry
-          cp .github/vital.wry.gdextension package/vital.wry/vital.wry.gdextension 2>/dev/null || true
-          mv collected/windows package/vital.wry/
-          zip_name="Vital.wry-${TAG}-windows.zip"
-          (cd package && zip -r "${GITHUB_WORKSPACE}/${zip_name}" vital.wry/ \
+          zip_name="Vital.wry-${TAG}.zip"
+          (cd collected/dist && zip -r "${GITHUB_WORKSPACE}/${zip_name}" . \
             --exclude "~*" \
             --exclude "*.TMP" \
             --exclude "*.tmp" \

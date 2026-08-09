@@ -1,6 +1,7 @@
 # Builds
 .vs/
 .vscode/
+.godot/
 .build/
 .bin/
 .dist/

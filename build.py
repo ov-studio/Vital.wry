@@ -24,7 +24,6 @@ class C:
 def log_step(msg): print(f"\n{C.BOLD}{C.HEADER}==> {msg}{C.RESET}", flush=True)
 def log_info(msg): print(f"    {C.DIM}{msg}{C.RESET}", flush=True)
 def log_ok(msg):   print(f"    {C.GREEN}{msg}{C.RESET}", flush=True)
-def log_warn(msg): print(f"    {C.YELLOW}[WARN]{C.RESET} {msg}", flush=True)
 def log_error(msg):print(f"    {C.RED}[ERROR]{C.RESET} {msg}", flush=True)
 
 # ── Platform ─────────────────────────────────────────────────────────────────
@@ -36,31 +35,24 @@ PLATFORM_TARGETS = {
 }
 
 PLATFORM_OUTPUTS = {
-    "Windows": ("windows", "godot_wry.dll",          "vital.wry.{profile}.x86_64.dll"),
-    "Linux":   ("linux",   "libgodot_wry.so",         "vital.wry.{profile}.x86_64.so"),
-    "Darwin":  ("macos",   "libgodot_wry.dylib",      "vital.wry.{profile}.dylib"),
+    "Windows": ("windows", "godot_wry.dll",       "vital.wry.{profile}.x86_64.dll"),
+    "Linux":   ("linux",   "libgodot_wry.so",      "vital.wry.{profile}.x86_64.so"),
+    "Darwin":  ("macos",   "libgodot_wry.dylib",   "vital.wry.{profile}.dylib"),
 }
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 class Build:
-    def __init__(self, script_dir, build_type, verbose=False):
+    def __init__(self, script_dir, build_type):
         self.script_dir = script_dir
-        self.build_type = build_type          # "release" or "debug"
-        self.verbose    = verbose
+        self.build_type = build_type
         self.os_type    = system()
         self.src_dir    = os.path.join(script_dir, "src")
         self.bin_dir    = os.path.join(script_dir, ".bin")
         self.build_dir  = os.path.join(script_dir, ".build")
 
-    def _target(self):
-        return PLATFORM_TARGETS.get(self.os_type)
-
-    def _cargo_profile_flag(self):
-        return ["--release"] if self.build_type == "release" else []
-
     def compile(self):
-        target = self._target()
+        target = PLATFORM_TARGETS.get(self.os_type)
         if not target:
             log_error(f"Unsupported platform: {self.os_type}")
             sys.exit(1)
@@ -68,10 +60,9 @@ class Build:
         log_step(f"Compiling [{self.os_type} | {self.build_type}]")
         log_info(f"Target: {target}")
 
-        cmd = ["cargo", "build", "--target", target] + self._cargo_profile_flag()
-
-        if self.verbose:
-            cmd.append("--verbose")
+        cmd = ["cargo", "build", "--target", target]
+        if self.build_type == "release":
+            cmd.append("--release")
 
         result = subprocess.run(cmd, cwd=self.src_dir)
         if result.returncode != 0:
@@ -85,13 +76,13 @@ class Build:
             log_error(f"Unsupported platform: {self.os_type}")
             sys.exit(1)
 
+        target = PLATFORM_TARGETS[self.os_type]
         subdir, src_name, dst_template = PLATFORM_OUTPUTS[self.os_type]
-        target  = self._target()
         dst_name = dst_template.format(profile=self.build_type)
 
-        src = os.path.join(self.bin_dir, target, self.build_type, src_name)
+        src     = os.path.join(self.bin_dir, target, self.build_type, src_name)
         dst_dir = os.path.join(self.build_dir, subdir)
-        dst = os.path.join(dst_dir, dst_name)
+        dst     = os.path.join(dst_dir, dst_name)
 
         log_step(f"Staging [{self.os_type} | {self.build_type}]")
         log_info(f"{src_name} → .build/{subdir}/{dst_name}")
@@ -113,15 +104,12 @@ def main():
     build_group.add_argument("--release", action="store_true")
     build_group.add_argument("--all",     action="store_true", help="Build both release and debug")
 
-    parser.add_argument("--verbose", action="store_true", help="Stream compiler output verbosely")
-
     args = parser.parse_args()
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
     build_types = ["release", "debug"] if args.all else ["release"] if args.release else ["debug"]
 
     for build_type in build_types:
-        b = Build(script_dir, build_type, verbose=args.verbose)
+        b = Build(script_dir, build_type)
         b.compile()
         b.stage()
 
@@ -131,3 +119,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+EOF

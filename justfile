@@ -5,7 +5,7 @@ target := if os == "macos" { arch() + "-apple-darwin" } else if os == "windows" 
 
 default: build
 
-set working-directory := 'rust'
+set working-directory := 'src'
 
 build profile="release":
 	@echo "Building for {{os}} ({{target}}, {{profile}})..."

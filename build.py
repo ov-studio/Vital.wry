@@ -1,6 +1,5 @@
 import os, sys, argparse, subprocess, shutil
-from platform import machine, system
-from multiprocessing import cpu_count
+from platform import system
 
 # ── Logger ───────────────────────────────────────────────────────────────────
 

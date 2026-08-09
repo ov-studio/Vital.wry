@@ -41,11 +41,17 @@ jobs:
           echo "=== .build/ structure ==="
           find .build/ -type f | sort || echo "ERROR: .build is empty or missing"
 
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp -r .build/. dist/
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: ${{ github.workspace }}/.build
+          path: dist
           if-no-files-found: error
 
   # ── Build: Linux ────────────────────────────────────────────────────────────

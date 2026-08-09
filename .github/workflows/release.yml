@@ -42,7 +42,7 @@ jobs:
           restore-keys: cargo-windows-
 
       - name: Build binaries
-        run: python build.py --all --verbose
+        run: python build.py --all
 
       - name: Save Cargo cache
         if: success()

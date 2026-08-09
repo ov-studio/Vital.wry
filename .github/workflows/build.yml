@@ -1,4 +1,4 @@
-name: 🤖 name: Release
+name: Release
 
 on:
   push:

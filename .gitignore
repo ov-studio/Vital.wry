@@ -1,9 +1,6 @@
 # Builds
 .vs/
 .vscode/
-.conan/
-.vcpkg/
-.godot/
 .build/
 .bin/
 .dist/

@@ -104,4 +104,4 @@ jobs:
           generate_release_notes: true
           draft:                  false
           prerelease:             ${{ contains(github.ref_name, '-') }}
-          files: "*.zip"
+          files: "Vital.wry-*.zip"

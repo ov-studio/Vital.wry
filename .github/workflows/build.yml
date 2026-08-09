@@ -74,7 +74,7 @@ jobs:
       - name: Clean files
         run: |
           mkdir -p package/vital.wry
-          cp .build/WRY.gdextension package/vital.wry/WRY.gdextension
+          cp .build/vital.wry.gdextension package/vital.wry/vital.wry.gdextension
           mv .build/linux .build/macos .build/windows package/vital.wry/
 
       - name: Upload artifact

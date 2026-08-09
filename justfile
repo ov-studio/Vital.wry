@@ -7,59 +7,54 @@ default: build
 
 set working-directory := 'rust'
 
-build: 
-	@echo "Building for {{os}} ({{target}})..."
-	@just _build-{{os}}
-	@just _copy-to-godot-{{os}}
+build profile="release":
+	@echo "Building for {{os}} ({{target}}, {{profile}})..."
+	@just _build-{{os}} {{profile}}
+	@just _copy-to-godot-{{os}} {{profile}}
 
-copy-to-godot: build
+copy-to-godot profile="release": (build profile)
 	@echo "Copying files to Godot project..."
-	@just _copy-to-godot-{{os}}
+	@just _copy-to-godot-{{os}} {{profile}}
 
 clean:
 	cargo clean
 
-_build-macos:
-	cargo build --target {{target}}  --release
-	mkdir -p ./target/{{target}}/release/libgodot_wry.framework/Resources
-	mv ./target/{{target}}/release/libgodot_wry.dylib ./target/{{target}}/release/libgodot_wry.framework/libgodot_wry.dylib
-	cp ../assets/Info.plist ./target/{{target}}/release/libgodot_wry.framework/Resources/Info.plist
+_build-macos profile:
+	cargo build --target {{target}} {{ if profile == "release" { "--release" } else { "" } }}
 
-_build-linux:
-	cargo build --target {{target}}  --release
+_build-linux profile:
+	cargo build --target {{target}} {{ if profile == "release" { "--release" } else { "" } }}
 
-_build-windows:
-	cargo build --target {{target}}  --release
+_build-windows profile:
+	cargo build --target {{target}} {{ if profile == "release" { "--release" } else { "" } }}
 
-_copy-to-godot-macos:
-	mkdir -p ../godot/addons/godot_wry/bin/{{target}}
-	cp -R ./target/{{target}}/release/libgodot_wry.framework ../godot/addons/godot_wry/bin/{{target}}
+_copy-to-godot-macos profile:
+	mkdir -p ../godot/addons/godot_wry/macos
+	cp ./target/{{target}}/{{profile}}/libgodot_wry.dylib ../godot/addons/godot_wry/macos/vital.wry.{{profile}}.dylib
 
-_copy-to-godot-linux:
-	mkdir -p ../godot/addons/godot_wry/bin/{{target}}
-	cp ./target/{{target}}/release/libgodot_wry.so ../godot/addons/godot_wry/bin/{{target}}/
+_copy-to-godot-linux profile:
+	mkdir -p ../godot/addons/godot_wry/linux
+	cp ./target/{{target}}/{{profile}}/libgodot_wry.so ../godot/addons/godot_wry/linux/vital.wry.{{profile}}.x86_64.so
 
-_copy-to-godot-windows:
-	mkdir -p ../godot/addons/godot_wry/bin/{{target}}
-	cp ./target/{{target}}/release/godot_wry.dll ../godot/addons/godot_wry/bin/{{target}}/
+_copy-to-godot-windows profile:
+	mkdir -p ../godot/addons/godot_wry/windows
+	cp ./target/{{target}}/{{profile}}/godot_wry.dll ../godot/addons/godot_wry/windows/vital.wry.{{profile}}.x86_64.dll
 
 build-all: build-macos-universal build-linux build-windows
 
-build-macos-universal:
-	@echo "Building universal macOS binary..."
-	cargo build --target aarch64-apple-darwin  --release
-	cargo build --target x86_64-apple-darwin  --release
-	mkdir -p ./target/release/libgodot_wry.framework/Resources
-	lipo -create -output ./target/release/libgodot_wry.dylib ./target/aarch64-apple-darwin/release/libgodot_wry.dylib ./target/x86_64-apple-darwin/release/libgodot_wry.dylib
-	mv ./target/release/libgodot_wry.dylib ./target/release/libgodot_wry.framework/libgodot_wry.dylib
-	cp ../assets/Info.plist ./target/release/libgodot_wry.framework/Resources/Info.plist
-	mkdir -p ../godot/addons/godot_wry/bin/universal-apple-darwin
-	cp -R ./target/release/libgodot_wry.framework ../godot/addons/godot_wry/bin/universal-apple-darwin
+build-macos-universal profile="release":
+	@echo "Building universal macOS binary ({{profile}})..."
+	cargo build --target aarch64-apple-darwin {{ if profile == "release" { "--release" } else { "" } }}
+	cargo build --target x86_64-apple-darwin {{ if profile == "release" { "--release" } else { "" } }}
+	mkdir -p ./target/{{profile}}
+	lipo -create -output ./target/{{profile}}/libgodot_wry.dylib ./target/aarch64-apple-darwin/{{profile}}/libgodot_wry.dylib ./target/x86_64-apple-darwin/{{profile}}/libgodot_wry.dylib
+	mkdir -p ../godot/addons/godot_wry/macos
+	cp ./target/{{profile}}/libgodot_wry.dylib ../godot/addons/godot_wry/macos/vital.wry.{{profile}}.dylib
 
-build-linux:
-	@echo "Building for Linux..."
-	just os="linux" build
+build-linux profile="release":
+	@echo "Building for Linux ({{profile}})..."
+	just os="linux" build {{profile}}
 
-build-windows:
-	@echo "Building for Windows..."
-	just os="windows" build
+build-windows profile="release":
+	@echo "Building for Windows ({{profile}})..."
+	just os="windows" build {{profile}}

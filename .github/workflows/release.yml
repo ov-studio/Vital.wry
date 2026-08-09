@@ -26,6 +26,16 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Restore Cargo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/.bin
+          key: cargo-windows-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: cargo-windows-
+
       - name: Install Just
         uses: extractions/setup-just@v1
 
@@ -34,6 +44,16 @@ jobs:
 
       - name: Build binaries (debug)
         run: just build debug
+
+      - name: Save Cargo cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/.bin
+          key: cargo-windows-${{ hashFiles('src/Cargo.lock') }}
 
       - name: Debug build output
         shell: bash

@@ -18,12 +18,15 @@ jobs:
           - os-name: 🐧 Linux (64-bit)
             runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            folder: linux
           - os-name: 🍎 macOS (Universal)
             runs-on: macos-latest
             target: universal-apple-darwin
+            folder: macos
           - os-name: 🪟 Windows (64-bit)
             runs-on: windows-latest
             target: x86_64-pc-windows-msvc
+            folder: windows
     runs-on: ${{ matrix.platform.runs-on }}
     steps:
       - name: Checkout
@@ -42,15 +45,18 @@ jobs:
       - name: Install Just
         uses: extractions/setup-just@v1
 
-      - name: Build binaries
-        run: just ${{ matrix.platform.target == 'universal-apple-darwin' && 'build-macos-universal' || 'build' }}
+      - name: Build binaries (release)
+        run: just ${{ matrix.platform.target == 'universal-apple-darwin' && 'build-macos-universal' || 'build' }} release
+
+      - name: Build binaries (debug)
+        run: just ${{ matrix.platform.target == 'universal-apple-darwin' && 'build-macos-universal' || 'build' }} debug
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.target }}
+          name: ${{ matrix.platform.folder }}
           path: |
-            godot/addons/godot_wry/bin/${{ matrix.platform.target }}
+            godot/addons/godot_wry/${{ matrix.platform.folder }}
 
   zip:
     name: 📦 Package
@@ -63,7 +69,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          path: godot/addons/godot_wry/bin
+          path: godot/addons/godot_wry
 
       - name: Clean files
         run: |

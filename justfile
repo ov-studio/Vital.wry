@@ -10,11 +10,11 @@ set working-directory := 'rust'
 build profile="release":
 	@echo "Building for {{os}} ({{target}}, {{profile}})..."
 	@just _build-{{os}} {{profile}}
-	@just _copy-to-godot-{{os}} {{profile}}
+	@just _copy-to-build-{{os}} {{profile}}
 
-copy-to-godot profile="release": (build profile)
-	@echo "Copying files to Godot project..."
-	@just _copy-to-godot-{{os}} {{profile}}
+copy-to-build profile="release": (build profile)
+	@echo "Copying files to .build..."
+	@just _copy-to-build-{{os}} {{profile}}
 
 clean:
 	cargo clean
@@ -28,17 +28,17 @@ _build-linux profile:
 _build-windows profile:
 	cargo build --target {{target}} {{ if profile == "release" { "--release" } else { "" } }}
 
-_copy-to-godot-macos profile:
-	mkdir -p ../godot/addons/godot_wry/macos
-	cp ./target/{{target}}/{{profile}}/libgodot_wry.dylib ../godot/addons/godot_wry/macos/vital.wry.{{profile}}.dylib
+_copy-to-build-macos profile:
+	mkdir -p ../.build/macos
+	cp ./target/{{target}}/{{profile}}/libgodot_wry.dylib ../.build/macos/vital.wry.{{profile}}.dylib
 
-_copy-to-godot-linux profile:
-	mkdir -p ../godot/addons/godot_wry/linux
-	cp ./target/{{target}}/{{profile}}/libgodot_wry.so ../godot/addons/godot_wry/linux/vital.wry.{{profile}}.x86_64.so
+_copy-to-build-linux profile:
+	mkdir -p ../.build/linux
+	cp ./target/{{target}}/{{profile}}/libgodot_wry.so ../.build/linux/vital.wry.{{profile}}.x86_64.so
 
-_copy-to-godot-windows profile:
-	mkdir -p ../godot/addons/godot_wry/windows
-	cp ./target/{{target}}/{{profile}}/godot_wry.dll ../godot/addons/godot_wry/windows/vital.wry.{{profile}}.x86_64.dll
+_copy-to-build-windows profile:
+	mkdir -p ../.build/windows
+	cp ./target/{{target}}/{{profile}}/godot_wry.dll ../.build/windows/vital.wry.{{profile}}.x86_64.dll
 
 build-all: build-macos-universal build-linux build-windows
 
@@ -48,8 +48,8 @@ build-macos-universal profile="release":
 	cargo build --target x86_64-apple-darwin {{ if profile == "release" { "--release" } else { "" } }}
 	mkdir -p ./target/{{profile}}
 	lipo -create -output ./target/{{profile}}/libgodot_wry.dylib ./target/aarch64-apple-darwin/{{profile}}/libgodot_wry.dylib ./target/x86_64-apple-darwin/{{profile}}/libgodot_wry.dylib
-	mkdir -p ../godot/addons/godot_wry/macos
-	cp ./target/{{profile}}/libgodot_wry.dylib ../godot/addons/godot_wry/macos/vital.wry.{{profile}}.dylib
+	mkdir -p ../.build/macos
+	cp ./target/{{profile}}/libgodot_wry.dylib ../.build/macos/vital.wry.{{profile}}.dylib
 
 build-linux profile="release":
 	@echo "Building for Linux ({{profile}})..."

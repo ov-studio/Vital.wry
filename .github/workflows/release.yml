@@ -60,6 +60,7 @@ jobs:
       - name: Download all dist artifacts
         uses: actions/download-artifact@v4
         with:
+          name: dist
           path: collected/
 
       - name: Debug collected structure
@@ -75,7 +76,7 @@ jobs:
             exit 1
           fi
           zip_name="Vital.wry-${TAG}.zip"
-          (cd collected/dist && zip -r "${GITHUB_WORKSPACE}/${zip_name}" . \
+          (cd collected && zip -r "${GITHUB_WORKSPACE}/${zip_name}" . \
             --exclude "~*" \
             --exclude "*.TMP" \
             --exclude "*.tmp" \

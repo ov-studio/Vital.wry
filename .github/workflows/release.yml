@@ -26,6 +26,11 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
       - name: Restore Cargo cache
         uses: actions/cache/restore@v4
         with:
@@ -36,14 +41,8 @@ jobs:
           key: cargo-windows-${{ hashFiles('src/Cargo.lock') }}
           restore-keys: cargo-windows-
 
-      - name: Install Just
-        uses: extractions/setup-just@v1
-
-      - name: Build binaries (release)
-        run: just build release
-
-      - name: Build binaries (debug)
-        run: just build debug
+      - name: Build binaries
+        run: python build.py --all --verbose
 
       - name: Save Cargo cache
         if: success()

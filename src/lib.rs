@@ -126,6 +126,10 @@ struct OffscreenState {
     // Diagnostic: counts logged capture failures so we get real error info for the
     // first few frames without spamming the console forever if capture never recovers.
     frame_fail_log_count:   u32,
+    // Diagnostic: logs once, the first time a frame is successfully decoded into
+    // offscreen_texture, so we have positive confirmation capture is actually working
+    // (previously there was no success-path log at all — only silent failure paths).
+    first_frame_logged:     bool,
 }
  
 #[cfg(target_os = "windows")]
@@ -342,12 +346,19 @@ impl WebView {
             MiscFlags: 0,
         };
         let mut staging_opt: Option<ID3D11Texture2D> = None;
-        if unsafe { state.d3d_device.CreateTexture2D(&staging_desc, None, Some(&mut staging_opt)) }.is_err() { return; }
-        let staging: ID3D11Texture2D = match staging_opt { Some(t) => t, None => return };
+        if let Err(e) = unsafe { state.d3d_device.CreateTexture2D(&staging_desc, None, Some(&mut staging_opt)) } {
+            diag_fail!("CreateTexture2D (staging)", e);
+        }
+        let staging: ID3D11Texture2D = match staging_opt {
+            Some(t) => t,
+            None => diag_fail!("CreateTexture2D (staging) returned no texture"),
+        };
         unsafe { state.d3d_context.CopyResource(&staging, &src_tex) };
  
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        if unsafe { state.d3d_context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }.is_err() { return; }
+        if let Err(e) = unsafe { state.d3d_context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) } {
+            diag_fail!("Map (staging)", e);
+        }
  
         let row_pitch = mapped.RowPitch as usize;
         let raw_ptr   = mapped.pData as *const u8;
@@ -381,6 +392,16 @@ impl WebView {
                     ImageTexture::create_from_image(&image)
                         .expect("offscreen: ImageTexture::create_from_image failed")
                 );
+            }
+        }
+
+        // Re-borrow state (the block above needed `self` mutably for offscreen_texture,
+        // which conflicts with the earlier `state` borrow going out of scope naturally
+        // by this point) to log success exactly once.
+        if let Some(state) = self.offscreen_state.as_mut() {
+            if !state.first_frame_logged {
+                state.first_frame_logged = true;
+                godot_print!("[Godot WRY] offscreen: first frame captured and decoded ({}x{}) — get_texture() should now return a valid texture", w, h);
             }
         }
     }
@@ -461,8 +482,11 @@ impl WebView {
         let window_id = self.base().get_window().map(|w| w.get_window_id()).unwrap_or(0);
         self.window_id = window_id;
  
-        let godot_win   = GodotWindow::new(window_id);
-        let parent_hwnd = match godot_win.window_handle().unwrap().as_raw() {
+        let godot_win = GodotWindow::new(window_id);
+        // Only used to confirm we're actually on a Win32 window handle before
+        // proceeding — the offscreen HWND is intentionally created with no owner,
+        // see the comment further down.
+        let _parent_hwnd = match godot_win.window_handle().unwrap().as_raw() {
             RawWindowHandle::Win32(w) => HWND(w.hwnd.get() as _),
             _ => { godot_error!("[Godot WRY] offscreen: unsupported window handle"); return; }
         };
@@ -484,6 +508,24 @@ impl WebView {
         // though every API call reports success. Keeping the window on a real monitor
         // guarantees DWM composites it normally; we hide it from the user instead by
         // shoving it to the bottom of the z-order, fully covered by the Godot window.
+        //
+        // NOTE: this window is created with NO owner (`None` below). It used to be
+        // created with `parent_hwnd` passed as the hwndParent of a WS_POPUP — which
+        // Win32 treats as an *owner*, not a parent. Windows unconditionally keeps an
+        // owned window above its owner in the z-order (enforced by the OS itself,
+        // re-applied whenever the owner is activated), so SetWindowPos(HWND_BOTTOM)
+        // could never actually hide it — it always popped back on top. That was the
+        // "offscreen webview renders on screen" bug. With no owner, nothing forces
+        // it above the game window and HWND_BOTTOM sticks.
+        //
+        // We deliberately do NOT use WS_EX_LAYERED + zero alpha here. It sounds like
+        // a clean way to make the window invisible regardless of z-order, but on some
+        // driver/DWM combinations a fully-transparent layered window's redirection
+        // surface is exactly the kind of thing WGC (Direct3D11CaptureFramePool) can
+        // fail to capture from — which would produce precisely the "get_texture()
+        // always nil" symptom, silently. Ordinary z-order hiding (this block) is the
+        // safer bet for capture reliability; only reach for WS_EX_LAYERED if z-order
+        // hiding alone turns out to be visually insufficient.
         let offscreen_hwnd: HWND = unsafe {
             let class_name: Vec<u16> = "VitalOffscreen".encode_utf16().chain(std::iter::once(0)).collect();
             let wc = WNDCLASSEXW {
@@ -507,7 +549,8 @@ impl WebView {
                 PCWSTR::null(),
                 WS_POPUP,
                 0, 0, w as i32, h as i32,
-                Some(parent_hwnd),
+                None, // no owner — see NOTE above; an owned popup is always kept
+                      // above its owner by Windows, which was why this showed on screen
                 Some(HMENU::default()),
                 Some(HINSTANCE::default()),
                 None,
@@ -637,19 +680,38 @@ impl WebView {
         }
  
         // ── Graphics Capture pipeline ────────────────────────────────────────
+        // Every step below now logs and bails out cleanly on failure instead of
+        // .unwrap()-panicking, and logs on success too — so a failed run tells us
+        // exactly which WinRT call is the actual problem instead of leaving
+        // get_texture() silently nil forever with no trace of why.
         let interop: IGraphicsCaptureItemInterop =
-            windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().unwrap();
+            match windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>() {
+                Ok(i) => i,
+                Err(e) => { godot_error!("[Godot WRY] offscreen: could not get IGraphicsCaptureItemInterop factory: {e}"); return; }
+            };
         // Capture the hidden offscreen HWND — gets only WebView2 pixels, Godot window untouched
-        let capture_item: GraphicsCaptureItem = unsafe {
-            interop.CreateForWindow(offscreen_hwnd).expect("offscreen: IGraphicsCaptureItemInterop::CreateForWindow failed")
+        let capture_item: GraphicsCaptureItem = match unsafe { interop.CreateForWindow(offscreen_hwnd) } {
+            Ok(item) => item,
+            Err(e) => { godot_error!("[Godot WRY] offscreen: CreateForWindow failed: {e} — capture will never start, get_texture() will stay nil"); return; }
         };
- 
-        let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+        godot_print!("[Godot WRY] offscreen: capture item created for hwnd {:?}", offscreen_hwnd.0);
+
+        let frame_pool = match Direct3D11CaptureFramePool::CreateFreeThreaded(
             &winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized,
             2, SizeInt32 { Width: w as i32, Height: h as i32 },
-        ).unwrap();
-        let session = frame_pool.CreateCaptureSession(&capture_item).unwrap();
-        session.StartCapture().unwrap();
+        ) {
+            Ok(fp) => fp,
+            Err(e) => { godot_error!("[Godot WRY] offscreen: CreateFreeThreaded failed: {e} — capture will never start, get_texture() will stay nil"); return; }
+        };
+        let session = match frame_pool.CreateCaptureSession(&capture_item) {
+            Ok(s) => s,
+            Err(e) => { godot_error!("[Godot WRY] offscreen: CreateCaptureSession failed: {e} — capture will never start, get_texture() will stay nil"); return; }
+        };
+        if let Err(e) = session.StartCapture() {
+            godot_error!("[Godot WRY] offscreen: StartCapture failed: {e} — capture will never start, get_texture() will stay nil");
+            return;
+        }
+        godot_print!("[Godot WRY] offscreen: capture session started ({}x{})", w, h);
  
         self.offscreen_state = Some(Box::new(OffscreenState {
             d3d_device, d3d_context,
@@ -660,6 +722,7 @@ impl WebView {
             offscreen_hwnd,
             size: (w, h),
             frame_fail_log_count: 0,
+            first_frame_logged: false,
         }));
     }
  

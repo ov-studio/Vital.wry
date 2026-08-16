@@ -2,7 +2,7 @@
 mod macros;
 mod godot_window;
 mod protocols;
-
+ 
 use godot::global::MouseButtonMask;
 use godot::init::*;
 use godot::prelude::*;
@@ -16,21 +16,21 @@ use std::path::PathBuf;
 use wry::{WebViewBuilder, WebContext, Rect, PageLoadEvent};
 use wry::dpi::{PhysicalPosition, PhysicalSize};
 use wry::http::Request;
-
+ 
 use crate::godot_window::GodotWindow;
 use crate::protocols::get_res_response;
-
+ 
 #[cfg(target_os = "windows")]
 use {
     raw_window_handle::{HasWindowHandle, RawWindowHandle},
     windows::Win32::Foundation::HWND,
     windows::Win32::UI::WindowsAndMessaging::{
         EnumChildWindows, GetWindowLongPtrA, SetWindowLongPtrA, SetWindowPos,
-        GWL_STYLE, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
+        GWL_STYLE, HWND_TOP, HWND_BOTTOM, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
     },
     wry::WebViewExtWindows,
 };
-
+ 
 // ── Offscreen-only Windows imports ──────────────────────────────────────────
 #[cfg(target_os = "windows")]
 use {
@@ -54,6 +54,8 @@ use {
     windows::Graphics::DirectX::DirectXPixelFormat,
     windows::Graphics::SizeInt32,
     windows::UI::Composition::{Compositor, ContainerVisual},
+    windows::UI::Composition::Desktop::DesktopWindowTarget,
+    windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop,
     // webview2-com 0.38.2 ships with windows 0.61.3 — same as wry 0.56, zero conflict
     webview2_com::{
         Microsoft::Web::WebView2::Win32::{
@@ -78,23 +80,24 @@ use {
     windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED},
     windows::Win32::UI::WindowsAndMessaging::{
         GetMessageW, TranslateMessage, DispatchMessageW, MSG,
-        CreateWindowExW, DestroyWindow, DefWindowProcW, RegisterClassExW,
-        WNDCLASSEXW, WINDOW_EX_STYLE, WS_POPUP, CS_OWNDC,
+        CreateWindowExW, DestroyWindow, DefWindowProcW, RegisterClassExW, ShowWindow,
+        WNDCLASSEXW, WS_POPUP, CS_OWNDC, SW_SHOWNOACTIVATE,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
         HCURSOR, HMENU, HICON,
     },
     windows::Win32::Graphics::Gdi::HBRUSH,
     windows::core::PCWSTR,
 };
-
+ 
 #[cfg(target_os = "windows")]
 #[link(name = "wevtapi")]
 extern "system" {}
-
+ 
 struct GodotWRY;
-
+ 
 #[gdextension]
 unsafe impl ExtensionLibrary for GodotWRY {}
-
+ 
 // ── PCWSTR helper — avoids HSTRING/trait version issues ──────────────────────
 // Encodes &str as null-terminated UTF-16. Caller keeps the Vec alive while ptr is used.
 #[cfg(target_os = "windows")]
@@ -103,7 +106,7 @@ fn to_pcwstr(s: &str) -> (Vec<u16>, PCWSTR) {
     let ptr = PCWSTR(wide.as_ptr());
     (wide, ptr)
 }
-
+ 
 // ── Offscreen COM state ───────────────────────────────────────────────────────
 #[cfg(target_os = "windows")]
 struct OffscreenState {
@@ -111,13 +114,20 @@ struct OffscreenState {
     d3d_context:            ID3D11DeviceContext,
     frame_pool:             Direct3D11CaptureFramePool,
     _session:               GraphicsCaptureSession,
+    // Must be kept alive: this is what actually binds the WinRT visual tree to
+    // offscreen_hwnd's DWM surface. Drop it and WebView2's output stops being
+    // presented anywhere, even though the composition controller still "works".
+    _desktop_target:        DesktopWindowTarget,
     composition_controller: ICoreWebView2CompositionController,
     controller:             ICoreWebView2Controller,
     webview2:               ICoreWebView2,
     offscreen_hwnd:         HWND,
     size:                   (u32, u32),
+    // Diagnostic: counts logged capture failures so we get real error info for the
+    // first few frames without spamming the console forever if capture never recovers.
+    frame_fail_log_count:   u32,
 }
-
+ 
 #[cfg(target_os = "windows")]
 impl Drop for OffscreenState {
     fn drop(&mut self) {
@@ -126,11 +136,11 @@ impl Drop for OffscreenState {
         }
     }
 }
-
+ 
 // All access is from the Godot main thread (the STA that created the objects).
 #[cfg(target_os = "windows")]
 unsafe impl Send for OffscreenState {}
-
+ 
 // ── GodotClass ────────────────────────────────────────────────────────────────
 #[derive(GodotClass)]
 #[class(base=Control)]
@@ -167,7 +177,7 @@ struct WebView {
     #[export] offscreen: bool,
     webview_hwnd: Option<isize>,
 }
-
+ 
 #[godot_api]
 impl IControl for WebView {
     fn init(base: Base<Control>) -> Self {
@@ -202,11 +212,11 @@ impl IControl for WebView {
             webview_hwnd: None,
         }
     }
-
+ 
     fn ready(&mut self) {
         self.create_webview();
     }
-
+ 
     fn enter_tree(&mut self) {
         if self.webview.is_some() {
             if let Some(gd_window) = self.base().get_window() {
@@ -217,7 +227,7 @@ impl IControl for WebView {
             }
         }
     }
-
+ 
     fn process(&mut self, _delta: f64) {
         self.update_webview();
         #[cfg(target_os = "windows")]
@@ -225,7 +235,7 @@ impl IControl for WebView {
             self.poll_offscreen_frame();
         }
     }
-
+ 
     fn input(&mut self, event: Gd<InputEvent>) {
         // Offscreen: forward all input directly into WebView2 composition controller
         #[cfg(target_os = "windows")]
@@ -233,11 +243,11 @@ impl IControl for WebView {
             self.forward_input_offscreen(&event);
             return;
         }
-
+ 
         if self.webview.is_none() || self.full_window_size {
             return;
         }
-
+ 
         if let Ok(mouse_event) = event.try_cast::<InputEventMouseButton>() {
             if mouse_event.is_pressed() {
                 let mouse_pos = self.base().get_global_mouse_position();
@@ -251,18 +261,18 @@ impl IControl for WebView {
         }
     }
 }
-
+ 
 #[godot_api]
 impl WebView {
     #[signal]
     fn ipc_message(message: GString);
-
+ 
     #[signal]
     fn page_load_started(message: GString);
-
+ 
     #[signal]
     fn page_load_finished(message: GString);
-
+ 
     // ── get_texture ───────────────────────────────────────────────────────
     /// Returns the Godot instance_id of the ImageTexture updated each frame when offscreen = true.
     /// Pass this integer to draw_image in the canvas API — it resolves via ObjectDB.
@@ -274,22 +284,55 @@ impl WebView {
             .map(|t| t.instance_id().to_i64())
             .unwrap_or(0)
     }
-
+ 
     // ── Windows: poll one Graphics Capture frame → ImageTexture ──────────
     #[cfg(target_os = "windows")]
     fn poll_offscreen_frame(&mut self) {
-        let state = match self.offscreen_state.as_ref() { Some(s) => s, None => return };
-
-        let frame = match state.frame_pool.TryGetNextFrame() { Ok(f) => f, Err(_) => return };
-        let surface = match frame.Surface() { Ok(s) => s, Err(_) => return };
-        let access: IDirect3DDxgiInterfaceAccess = match surface.cast() { Ok(a) => a, Err(_) => return };
-        let src_tex: ID3D11Texture2D = match unsafe { access.GetInterface() } { Ok(t) => t, Err(_) => return };
-
+        let state = match self.offscreen_state.as_mut() { Some(s) => s, None => return };
+ 
+        macro_rules! diag_fail {
+            ($stage:literal) => {{
+                if state.frame_fail_log_count < 180 { // ~3s at 60fps, then go quiet
+                    state.frame_fail_log_count += 1;
+                    if state.frame_fail_log_count <= 5 || state.frame_fail_log_count == 180 {
+                        godot_error!("[Godot WRY] offscreen: capture stalled at '{}' (#{})", $stage, state.frame_fail_log_count);
+                    }
+                }
+                return;
+            }};
+            ($stage:literal, $err:expr) => {{
+                if state.frame_fail_log_count < 180 {
+                    state.frame_fail_log_count += 1;
+                    if state.frame_fail_log_count <= 5 || state.frame_fail_log_count == 180 {
+                        godot_error!("[Godot WRY] offscreen: capture failed at '{}': {} (#{})", $stage, $err, state.frame_fail_log_count);
+                    }
+                }
+                return;
+            }};
+        }
+ 
+        let frame = match state.frame_pool.TryGetNextFrame() {
+            Ok(f) => f,
+            Err(e) => diag_fail!("TryGetNextFrame", e),
+        };
+        let surface = match frame.Surface() {
+            Ok(s) => s,
+            Err(e) => diag_fail!("frame.Surface", e),
+        };
+        let access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
+            Ok(a) => a,
+            Err(e) => diag_fail!("surface.cast<IDirect3DDxgiInterfaceAccess>", e),
+        };
+        let src_tex: ID3D11Texture2D = match unsafe { access.GetInterface() } {
+            Ok(t) => t,
+            Err(e) => diag_fail!("access.GetInterface", e),
+        };
+ 
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { src_tex.GetDesc(&mut desc as *mut _) };
         let (w, h) = (desc.Width, desc.Height);
         if w == 0 || h == 0 { return; }
-
+ 
         let staging_desc = D3D11_TEXTURE2D_DESC {
             Width: w, Height: h, MipLevels: 1, ArraySize: 1,
             Format: desc.Format, SampleDesc: desc.SampleDesc,
@@ -302,10 +345,10 @@ impl WebView {
         if unsafe { state.d3d_device.CreateTexture2D(&staging_desc, None, Some(&mut staging_opt)) }.is_err() { return; }
         let staging: ID3D11Texture2D = match staging_opt { Some(t) => t, None => return };
         unsafe { state.d3d_context.CopyResource(&staging, &src_tex) };
-
+ 
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         if unsafe { state.d3d_context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }.is_err() { return; }
-
+ 
         let row_pitch = mapped.RowPitch as usize;
         let raw_ptr   = mapped.pData as *const u8;
         let mut packed = PackedByteArray::new();
@@ -325,12 +368,12 @@ impl WebView {
             }
         }
         unsafe { state.d3d_context.Unmap(&staging, 0) };
-
+ 
         let image = Image::create_from_data(
             w as i32, h as i32, false,
             godot::classes::image::Format::RGBA8, &packed,
         ).expect("offscreen: Image::create_from_data failed");
-
+ 
         match self.offscreen_texture.as_mut() {
             Some(tex) => tex.update(&image),
             None => {
@@ -341,7 +384,7 @@ impl WebView {
             }
         }
     }
-
+ 
     // ── Windows: forward Godot input → WebView2 composition controller ───
     #[cfg(target_os = "windows")]
     fn forward_input_offscreen(&mut self, event: &Gd<InputEvent>) {
@@ -351,7 +394,7 @@ impl WebView {
         let pt = POINT { x: (mp.x - cp.x) as i32, y: (mp.y - cp.y) as i32 };
         let state = match self.offscreen_state.as_mut() { Some(s) => s, None => return };
         let comp  = &state.composition_controller;
-
+ 
         if let Ok(mb) = event.clone().try_cast::<InputEventMouseButton>() {
             let pressed = mb.is_pressed();
             let kind = match (mb.get_button_index(), pressed) {
@@ -380,14 +423,27 @@ impl WebView {
             unsafe { let _ = state.webview2.ExecuteScript(ptr, None); }
         }
     }
-
+ 
     // ── Windows: resize offscreen capture pool ────────────────────────────
     #[cfg(target_os = "windows")]
     fn resize_offscreen(&mut self, w: u32, h: u32) {
         let state = match self.offscreen_state.as_mut() { Some(s) => s, None => return };
         if state.size == (w, h) { return; }
         state.size = (w, h);
-        unsafe { state.controller.SetBounds(RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 }).ok(); }
+        unsafe {
+            // Resize the real HWND too — WGC's CreateForWindow captures the window's
+            // actual client rect, which SetBounds/frame-pool-recreate below do NOT
+            // touch. Without this, capture stays stuck at the original creation size.
+            // Position stays (0,0) / bottom-of-z-order, matching creation — see the
+            // comment in build_offscreen_webview about why this must stay on-screen.
+            let _ = SetWindowPos(
+                state.offscreen_hwnd,
+                Some(HWND_BOTTOM),
+                0, 0, w as i32, h as i32,
+                SWP_NOACTIVATE,
+            );
+            state.controller.SetBounds(RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 }).ok();
+        }
         let dxgi: IDXGIDevice = state.d3d_device.cast().unwrap();
         let insp = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi).unwrap() };
         let winrt_dev: windows::Graphics::DirectX::Direct3D11::IDirect3DDevice = insp.cast().unwrap();
@@ -396,22 +452,22 @@ impl WebView {
             2, SizeInt32 { Width: w as i32, Height: h as i32 },
         ).ok();
     }
-
+ 
     // ── Windows: build offscreen WebView2 + Graphics Capture pipeline ─────
     #[cfg(target_os = "windows")]
     fn build_offscreen_webview(&mut self) {
         unsafe { let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED); }
-
+ 
         let window_id = self.base().get_window().map(|w| w.get_window_id()).unwrap_or(0);
         self.window_id = window_id;
-
+ 
         let godot_win   = GodotWindow::new(window_id);
         let parent_hwnd = match godot_win.window_handle().unwrap().as_raw() {
             RawWindowHandle::Win32(w) => HWND(w.hwnd.get() as _),
             _ => { godot_error!("[Godot WRY] offscreen: unsupported window handle"); return; }
         };
-
-
+ 
+ 
         let (w, h) = if self.full_window_size {
             let s = self.base().get_window().map(|w| w.get_size()).unwrap_or(Vector2i::new(1280, 720));
             (s.x as u32, s.y as u32)
@@ -419,12 +475,17 @@ impl WebView {
             let s = self.base().get_size();
             (s.x as u32, s.y as u32)
         };
-
-        // Create a hidden child HWND owned by the Godot window.
-        // WebView2 composition controller is parented to this, keeping it off-screen.
-        // WGC then captures this hidden HWND, giving us only WebView2's pixels.
+ 
+        // IMPORTANT: this is intentionally an on-screen position (0,0), not off-screen.
+        // An earlier version of this fix parked the window at (-32000, -32000) —
+        // outside any monitor's bounds. That's a known DWM/WGC gotcha: windows whose
+        // bounds don't intersect a real monitor are not reliably given a live
+        // composited surface, "shown" or not, so capture can silently stay empty even
+        // though every API call reports success. Keeping the window on a real monitor
+        // guarantees DWM composites it normally; we hide it from the user instead by
+        // shoving it to the bottom of the z-order, fully covered by the Godot window.
         let offscreen_hwnd: HWND = unsafe {
-            let class_name: Vec<u16> = "VitalOffscreen ".encode_utf16().collect();
+            let class_name: Vec<u16> = "VitalOffscreen".encode_utf16().chain(std::iter::once(0)).collect();
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 style: CS_OWNDC,
@@ -440,8 +501,8 @@ impl WebView {
                 hIconSm: HICON::default(),
             };
             RegisterClassExW(&wc); // ok to fail if class already registered
-            CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+            let hwnd = match CreateWindowExW(
+                WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
                 PCWSTR(class_name.as_ptr()),
                 PCWSTR::null(),
                 WS_POPUP,
@@ -450,10 +511,23 @@ impl WebView {
                 Some(HMENU::default()),
                 Some(HINSTANCE::default()),
                 None,
-            ).unwrap_or(HWND::default())
+            ) {
+                Ok(h) => h,
+                Err(e) => { godot_error!("[Godot WRY] offscreen: CreateWindowExW failed: {e}"); HWND::default() }
+            };
+            if hwnd != HWND::default() {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                // Push behind the real game window so the user never sees it, without
+                // moving it off-screen (see comment above for why that's unsafe here).
+                if let Err(e) = SetWindowPos(hwnd, Some(HWND_BOTTOM), 0, 0, w as i32, h as i32, SWP_NOACTIVATE) {
+                    godot_error!("[Godot WRY] offscreen: SetWindowPos(HWND_BOTTOM) failed: {e}");
+                }
+            } else {
+                godot_error!("[Godot WRY] offscreen: hidden HWND creation returned null");
+            }
+            hwnd
         };
-        // offscreen_hwnd is never shown — WebView2 renders into it invisibly
-
+ 
         // D3D11 device with BGRA support (required for Graphics Capture)
         let mut d3d_dev: Option<ID3D11Device>        = None;
         let mut d3d_ctx: Option<ID3D11DeviceContext>  = None;
@@ -473,17 +547,32 @@ impl WebView {
         }
         let d3d_device  = d3d_dev.unwrap();
         let d3d_context = d3d_ctx.unwrap();
-
+ 
         // Wrap as WinRT IDirect3DDevice for the capture frame pool
         let dxgi: IDXGIDevice = d3d_device.cast().unwrap();
         let insp = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi).unwrap() };
         let winrt_device: windows::Graphics::DirectX::Direct3D11::IDirect3DDevice = insp.cast().unwrap();
-
+ 
         // WinRT Compositor + ContainerVisual — this is what WebView2 renders into
         let compositor  = Compositor::new().unwrap();
         let root_visual: ContainerVisual = compositor.CreateContainerVisual().unwrap();
-        // Visual size not needed — WebView2 renders based on controller SetBounds below.
-
+        // Visual size not needed -- WebView2 renders based on controller SetBounds below.
+ 
+        // Bind the WinRT visual tree to offscreen_hwnd's actual DWM composition
+        // surface. Without this, root_visual is an orphan tree that WebView2
+        // dutifully renders into, but nothing ever presents those pixels to
+        // offscreen_hwnd -- so WGC's CreateForWindow(offscreen_hwnd) captures an
+        // empty surface forever. This was the root cause of get_texture() always
+        // returning nil: the composition controller and the capture target were
+        // never actually connected to each other.
+        let desktop_interop: ICompositorDesktopInterop = compositor.cast().unwrap();
+        let desktop_target: DesktopWindowTarget = unsafe {
+            desktop_interop
+                .CreateDesktopWindowTarget(offscreen_hwnd, false)
+                .expect("CreateDesktopWindowTarget failed")
+        };
+        desktop_target.SetRoot(&root_visual).expect("DesktopWindowTarget::SetRoot failed");
+ 
         // ── WebView2 environment (pump STA message loop until handler fires) ──
         let (env_tx, env_rx) = std::sync::mpsc::channel::<ICoreWebView2Environment>();
         let env_tx_arc = Arc::new(Mutex::new(Some(env_tx)));
@@ -499,7 +588,7 @@ impl WebView {
             if let Ok(e) = env_rx.try_recv() { break e; }
             unsafe { let mut msg = MSG::default(); if GetMessageW(&mut msg, None, 0, 0).as_bool() { TranslateMessage(&msg); DispatchMessageW(&msg); } }
         };
-
+ 
         // ── Composition controller ────────────────────────────────────────────
         let env3: ICoreWebView2Environment3 = env.cast().unwrap();
         let (comp_tx, comp_rx) = std::sync::mpsc::channel::<ICoreWebView2CompositionController>();
@@ -516,20 +605,24 @@ impl WebView {
             if let Ok(c) = comp_rx.try_recv() { break c; }
             unsafe { let mut msg = MSG::default(); if GetMessageW(&mut msg, None, 0, 0).as_bool() { TranslateMessage(&msg); DispatchMessageW(&msg); } }
         };
-
+ 
         // Point WebView2 at our ContainerVisual for rendering
         unsafe { comp_ctrl.SetRootVisualTarget(&root_visual).expect("SetRootVisualTarget failed"); }
-
+ 
         let controller: ICoreWebView2Controller = comp_ctrl.cast().unwrap();
         let webview2:   ICoreWebView2           = unsafe { controller.CoreWebView2().unwrap() };
         let ctrl3: ICoreWebView2Controller3     = controller.cast().unwrap();
         unsafe {
             ctrl3.SetBoundsMode(COREWEBVIEW2_BOUNDS_MODE_USE_RAW_PIXELS).ok();
             ctrl3.SetRasterizationScale(1.0).ok();
-            controller.SetIsVisible(false).ok(); // offscreen: no on-screen rendering
+            // Must be true: an "invisible" composition controller stops compositing
+            // frames at all (that's a separate concept from being on-screen). The
+            // hidden window's off-screen position is what keeps this from being
+            // seen by the user, not this flag.
+            controller.SetIsVisible(true).ok();
             controller.SetBounds(RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 }).ok();
         }
-
+ 
         // Navigate — PCWSTR from the same windows crate, no trait conflict
         let url_str  = String::from(&self.url);
         let html_str = String::from(&self.html);
@@ -542,30 +635,34 @@ impl WebView {
                 let _ = webview2.NavigateToString(ptr);
             }
         }
-
+ 
         // ── Graphics Capture pipeline ────────────────────────────────────────
         let interop: IGraphicsCaptureItemInterop =
             windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().unwrap();
         // Capture the hidden offscreen HWND — gets only WebView2 pixels, Godot window untouched
-        let capture_item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(offscreen_hwnd).unwrap() };
-
+        let capture_item: GraphicsCaptureItem = unsafe {
+            interop.CreateForWindow(offscreen_hwnd).expect("offscreen: IGraphicsCaptureItemInterop::CreateForWindow failed")
+        };
+ 
         let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized,
             2, SizeInt32 { Width: w as i32, Height: h as i32 },
         ).unwrap();
         let session = frame_pool.CreateCaptureSession(&capture_item).unwrap();
         session.StartCapture().unwrap();
-
+ 
         self.offscreen_state = Some(Box::new(OffscreenState {
             d3d_device, d3d_context,
             frame_pool, _session: session,
+            _desktop_target: desktop_target,
             composition_controller: comp_ctrl,
             controller, webview2,
             offscreen_hwnd,
             size: (w, h),
+            frame_fail_log_count: 0,
         }));
     }
-
+ 
     fn update_webview(&mut self) {
         if self.offscreen {
             #[cfg(target_os = "windows")]
@@ -581,11 +678,11 @@ impl WebView {
             }
             return;
         }
-
+ 
         if self.webview.is_none() {
             return;
         }
-
+ 
         let viewport_size = self.base().get_window()
             .map(|w| w.get_size())
             .unwrap_or_else(|| {
@@ -596,12 +693,12 @@ impl WebView {
         let content_scale_factor = self.base().get_window()
             .map(|w| w.get_content_scale_factor())
             .unwrap_or(1.0);
-
+ 
         let needs_resize = self.base().get_global_position() != self.previous_global_position
             || viewport_size != self.previous_viewport_size
             || window_position != self.previous_window_position
             || content_scale_factor != self.previous_content_scale_factor;
-
+ 
         if needs_resize {
             self.previous_global_position = self.base().get_global_position();
             self.previous_viewport_size = viewport_size;
@@ -609,30 +706,30 @@ impl WebView {
             self.previous_content_scale_factor = content_scale_factor;
             self.resize();
         }
-
+ 
         #[cfg(target_os = "linux")]
         while gtk::events_pending() {
             gtk::main_iteration_do(false);
         }
     }
-
+ 
     fn build_webview(&mut self) {
         let display_server = DisplayServer::singleton();
         if display_server.get_name() == "headless" {
             godot_warn!("Godot WRY: Headless mode detected. webview will not be created.");
             return;
         }
-
+ 
         #[cfg(target_os = "linux")]
         gtk::init().expect("Failed to initialize GTK");
-
+ 
         let window_id = self.base().get_window()
             .map(|w| w.get_window_id())
             .unwrap_or(0);
         self.window_id = window_id;
-
+ 
         let window = GodotWindow::new(window_id);
-
+ 
         #[cfg(target_os = "windows")]
         {
             let handle = window.window_handle().unwrap().as_raw();
@@ -645,7 +742,7 @@ impl WebView {
                 SetWindowLongPtrA(raw_handle, GWL_STYLE, current_style & !0x02000000);
             };
         }
-
+ 
         let base = Arc::new(Mutex::new(self.base().clone()));
         let resolved_data_directory: Option<PathBuf> = if !self.data_directory.is_empty() {
             let data_directory = self.data_directory.to_string();
@@ -665,7 +762,7 @@ impl WebView {
         } else {
             None
         };
-
+ 
         let mut context = WebContext::new(resolved_data_directory);
         let mut webview_builder = WebViewBuilder::new_with_web_context(&mut context)
             .with_transparent(self.transparent)
@@ -677,14 +774,14 @@ impl WebView {
             .with_focused(self.focused_when_created)
             .with_autoplay(self.autoplay)
             .with_accept_first_mouse(true);
-
+ 
         if self.html.is_empty() {
             webview_builder = webview_builder.with_url(String::from(&self.url));
         }
         if self.url.is_empty() {
             webview_builder = webview_builder.with_html(String::from(&self.html));
         }
-
+ 
         let webview_builder = webview_builder
             .with_ipc_handler({
                 let base = Arc::clone(&base);
@@ -699,7 +796,7 @@ impl WebView {
                             let y = json_value.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
                             let vp_x = global_pos.x + x;
                             let vp_y = global_pos.y + y;
-
+ 
                             match event_type {
                                 "_mouse_move" => {
                                     let movement_x = json_value.get("movementX").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
@@ -754,7 +851,7 @@ impl WebView {
                                     if let Some(mut viewport) = base.get_viewport() { viewport.push_input(&event); }
                                     return;
                                 },
-
+ 
                                 "_mouse_wheel" => {
                                     let delta_x = json_value.get("deltaX").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
                                     let delta_y = json_value.get("deltaY").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
@@ -779,7 +876,7 @@ impl WebView {
                                     }
                                     return;
                                 },
-
+ 
                                 "_key_down" | "_key_up" => {
                                     let key_str = json_value.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     let mut event = InputEventKey::new_gd();
@@ -815,20 +912,20 @@ impl WebView {
             .with_custom_protocol(
                 "res".into(), move |_webview_id, request| get_res_response(request),
             );
-
+ 
         if !self.url.is_empty() && !self.html.is_empty() {
             godot_error!("[Godot WRY] You have entered both a URL and HTML code. You may only enter one at a time.")
         }
-
+ 
         let webview = webview_builder.build_as_child(&window).unwrap();
-
+ 
         #[cfg(target_os = "windows")]
         {
             self.webview_hwnd = Some(webview.hwnd().0 as isize);
-
+ 
             if self.overlay {
                 use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_DISABLED};
-
+ 
                 unsafe extern "system" fn disable_child(
                     hwnd: HWND,
                     _lparam: windows::Win32::Foundation::LPARAM,
@@ -838,7 +935,7 @@ impl WebView {
                     SetWindowLongPtrA(hwnd, GWL_STYLE, style | WS_DISABLED.0 as isize);
                     windows::core::BOOL(1)
                 }
-
+ 
                 let root_hwnd = HWND(self.webview_hwnd.unwrap() as _);
                 unsafe {
                     let style = GetWindowLongPtrA(root_hwnd, GWL_STYLE);
@@ -847,12 +944,12 @@ impl WebView {
                 }
             }
         }
-
+ 
         self.webview.replace(webview);
         self.resize();
         self.apply_z_order();
     }
-
+ 
     fn create_webview(&mut self) {
         if self.offscreen {
             #[cfg(target_os = "windows")]
@@ -861,21 +958,21 @@ impl WebView {
             godot_warn!("[Godot WRY] offscreen = true is only supported on Windows.");
             return;
         }
-
+ 
         self.build_webview();
         if self.webview.is_none() {
             return;
         }
-
+ 
         let mut viewport = self.base().get_tree().get_root().expect("Could not get viewport");
         viewport.connect("size_changed", &Callable::from_object_method(&*self.base(), "resize"));
         self.base().clone().connect("resized", &Callable::from_object_method(&*self.base(), "resize"));
         self.base().clone().connect("visibility_changed", &Callable::from_object_method(&*self.base(), "update_visibility"));
     }
-
+ 
     fn reparent_webview(&mut self, new_window_id: i32) {
         if self.webview.is_none() { return; }
-
+ 
         #[cfg(target_os = "windows")]
         {
             let window = GodotWindow::new(new_window_id);
@@ -896,16 +993,16 @@ impl WebView {
             }
             godot_warn!("[Godot WRY] Native reparent failed, falling back to rebuild");
         }
-
+ 
         self.webview.take();
         self.build_webview();
     }
-
+ 
     #[func]
     fn post_message(&self, message: GString) {
         let data   = serde_json::json!({ "detail": String::from(message) });
         let script = format!("document.dispatchEvent(new CustomEvent('message', {}))", data);
-
+ 
         if self.offscreen {
             #[cfg(target_os = "windows")]
             if let Some(state) = &self.offscreen_state {
@@ -918,7 +1015,7 @@ impl WebView {
             let _ = webview.evaluate_script(&script);
         }
     }
-
+ 
     #[func]
     fn resize(&self) {
         if self.offscreen { return; }
@@ -948,7 +1045,7 @@ impl WebView {
             let _ = webview.set_bounds(rect);
         }
     }
-
+ 
     fn get_content_scale(&self) -> (f32, f32) {
         if let Some(window) = self.base().get_window() {
             let window_size = window.get_size();
@@ -964,7 +1061,7 @@ impl WebView {
         }
         (1.0, 1.0)
     }
-
+ 
     #[func]
     fn eval(&self, script: GString) {
         if self.offscreen {
@@ -980,7 +1077,7 @@ impl WebView {
             let _ = webview.evaluate_script(&*String::from(script));
         }
     }
-
+ 
     #[func]
     fn update_visibility(&self) {
         if self.offscreen {
@@ -1003,7 +1100,7 @@ impl WebView {
             }
         }
     }
-
+ 
     #[func]
     fn set_visible(&self, visibility: bool) {
         if self.offscreen {
@@ -1017,7 +1114,7 @@ impl WebView {
             let _ = webview.set_visible(visibility);
         }
     }
-
+ 
     #[func]
     fn load_html(&self, html: GString) {
         if self.offscreen {
@@ -1033,7 +1130,7 @@ impl WebView {
             let _ = webview.load_html(&*String::from(html));
         }
     }
-
+ 
     #[func]
     fn load_url(&self, url: GString) {
         let mut url_str = String::from(url);
@@ -1054,50 +1151,50 @@ impl WebView {
             let _ = webview.load_url(&url_str);
         }
     }
-
+ 
     #[func]
     fn clear_all_browsing_data(&self) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.clear_all_browsing_data(); }
     }
-
+ 
     #[func]
     fn close_devtools(&self) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.close_devtools(); }
     }
-
+ 
     #[func]
     fn open_devtools(&self) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.open_devtools(); }
     }
-
+ 
     #[func]
     fn is_devtools_open(&self) -> bool {
         if self.offscreen { return false; }
         if let Some(webview) = &self.webview { return webview.is_devtools_open(); }
         false
     }
-
+ 
     #[func]
     fn focus(&self) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.focus(); }
     }
-
+ 
     #[func]
     fn focus_parent(&self) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.focus_parent(); }
     }
-
+ 
     #[func]
     fn print(&self) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.print(); }
     }
-
+ 
     #[func]
     fn reload(&self) {
         if self.offscreen {
@@ -1107,24 +1204,24 @@ impl WebView {
         }
         if let Some(webview) = &self.webview { let _ = webview.reload(); }
     }
-
+ 
     #[func]
     fn zoom(&self, scale_factor: f64) {
         if self.offscreen { return; }
         if let Some(webview) = &self.webview { let _ = webview.zoom(scale_factor); }
     }
-
+ 
     #[func]
     fn get_window_z_index(&self) -> i32 {
         self.window_z_index
     }
-
+ 
     #[func]
     fn set_window_z_index(&mut self, value: i32) {
         self.window_z_index = value;
         self.apply_z_order();
     }
-
+ 
     fn get_sibling_webviews(&self) -> Vec<Gd<WebView>> {
         let mut siblings: Vec<Gd<WebView>> = Vec::new();
         if let Some(tree) = self.base().get_tree_or_null() {
@@ -1145,7 +1242,7 @@ impl WebView {
         siblings.sort_by_key(|wv| wv.bind().window_z_index);
         siblings
     }
-
+ 
     fn apply_z_order(&self) {
         let mut all: Vec<(i32, Option<Gd<WebView>>)> = Vec::new();
         for wv in self.get_sibling_webviews() {
@@ -1154,7 +1251,7 @@ impl WebView {
         }
         all.push((self.window_z_index, None));
         all.sort_by_key(|(z, _)| *z);
-
+ 
         #[cfg(target_os = "windows")]
         {
             for (_, maybe_wv) in &all {
@@ -1175,14 +1272,14 @@ impl WebView {
                 }
             }
         }
-
+ 
         #[cfg(not(target_os = "windows"))]
         {
             let _ = all;
         }
     }
 }
-
+ 
 fn send_wheel_event(
     button: MouseButton,
     position: Vector2,
@@ -1209,10 +1306,10 @@ fn send_wheel_event(
         }
     }
 }
-
+ 
 lazy_static! {
     static ref CURRENT_BUTTON_MASK: Mutex<MouseButtonMask> = Mutex::new(MouseButtonMask::default());
-
+ 
     static ref GODOT_KEYS: HashMap<&'static str, Key> = HashMap::from([
         ("a", Key::A), ("A", Key::A), ("b", Key::B), ("B", Key::B),
         ("c", Key::C), ("C", Key::C), ("d", Key::D), ("D", Key::D),

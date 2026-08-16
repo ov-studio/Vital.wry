@@ -732,6 +732,7 @@ dependencies = [
  "lazy_static",
  "raw-window-handle",
  "serde_json",
+ "webview2-com",
  "windows",
  "wry",
  "x11-dl",

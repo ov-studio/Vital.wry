@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]  # Compile this crate to a dynamic C library.
+crate-type = ["cdylib"]
 path = "lib.rs"
 
 [dependencies]
@@ -18,4 +18,26 @@ serde_json = "1.0"
 gtk = "0.18.1"
 x11-dl = "2.21.0"
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.61.1", features = ["Win32", "Win32_Foundation", "Win32_UI", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry", "Win32_System_Diagnostics_Etw"]}
+# Exact versions already in wry 0.56's lock file — single windows-core in graph, no conflicts
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Registry",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Com",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",       # D3D11_TEXTURE2D_DESC, GetDesc, CreateTexture2D
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "UI_Composition",
+    "UI_Composition_Desktop",
+    "Foundation_Numerics",
+    "Win32_Graphics_Gdi",
+]}
+webview2-com = "0.38.2"

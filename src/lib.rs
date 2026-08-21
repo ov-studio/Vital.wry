@@ -100,6 +100,17 @@ struct WebView {
     // eating all input. This tracks the last requested state so it can
     // be (re)applied the moment the native webview actually exists.
     desired_visible: bool,
+    // If load_url()/load_html() is called before self.webview exists yet
+    // (creation deferred while minimized), the call used to just vanish --
+    // there was nothing to apply it to and nothing tracking it for later.
+    // This stores whichever one was last requested so build_webview() can
+    // replay it the moment the native webview actually gets constructed.
+    pending_load: Option<PendingLoad>,
+}
+
+enum PendingLoad {
+    Url(String),
+    Html(String),
 }
 
 #[godot_api]
@@ -133,6 +144,7 @@ impl IControl for WebView {
             webview_creation_pending: false,
             webview_creation_failed_logged: false,
             desired_visible: true,
+            pending_load: None,
         }
     }
 
@@ -556,6 +568,25 @@ impl WebView {
         }
         self.resize();
         self.apply_z_order();
+
+        // Replay a load_url()/load_html() that arrived while construction
+        // was still pending -- otherwise the webview comes up visible but
+        // stuck on the default blank page forever, since that call was
+        // silently dropped rather than queued.
+        if let Some(pending) = self.pending_load.take() {
+            if let Some(webview) = &self.webview {
+                match pending {
+                    PendingLoad::Url(url) => {
+                        godot_print!("[Godot WRY] build_webview(): replaying deferred load_url({})", url);
+                        let _ = webview.load_url(&url);
+                    }
+                    PendingLoad::Html(html) => {
+                        godot_print!("[Godot WRY] build_webview(): replaying deferred load_html(...)");
+                        let _ = webview.load_html(&html);
+                    }
+                }
+            }
+        }
     }
 
     fn create_webview(&mut self) {
@@ -709,14 +740,18 @@ impl WebView {
     }
 
     #[func]
-    fn load_html(&self, html: GString) {
+    fn load_html(&mut self, html: GString) {
+        let html_str = String::from(html);
         if let Some(webview) = &self.webview {
-            let _ = webview.load_html(&*String::from(html));
+            let _ = webview.load_html(&html_str);
+        } else {
+            godot_print!("[Godot WRY] load_html() called before webview exists -- deferring until construction completes");
+            self.pending_load = Some(PendingLoad::Html(html_str));
         }
     }
 
     #[func]
-    fn load_url(&self, url: GString) {
+    fn load_url(&mut self, url: GString) {
         let mut url_str = String::from(url);
 
         if let Some(stripped) = url_str.strip_prefix("res://") {
@@ -735,6 +770,9 @@ impl WebView {
 
         if let Some(webview) = &self.webview {
             let _ = webview.load_url(&url_str);
+        } else {
+            godot_print!("[Godot WRY] load_url() called before webview exists -- deferring until construction completes");
+            self.pending_load = Some(PendingLoad::Url(url_str));
         }
     }
 

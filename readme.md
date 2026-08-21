@@ -2,19 +2,20 @@
 
 A cross-platform native webview extension built on WRY, designed to extend and complement the Vital.sandbox ecosystem.
 
-Vital.wry extends upstream with additional features and fixes:
-
-- **Native webview**: Exposes the system's built-in webview inside Godot 4 — no bundled browser, no extra dependencies
-- **Two-way integration**: Full communication between JavaScript and GDScript
-- **Input forwarding**: Mouse and keyboard events forward correctly into the webview and back into Godot
-- **Deferred creation**: Webview construction is safely deferred on minimized windows and resumes without interruption once restored
-- **Z-index ordering**: Multiple webviews can be layered and reordered independently
-
 ## Getting Started
 
 - **Releases**: Grab the latest stable build from [Releases](https://github.com/ov-studio/Vital.wry/releases).
 - **Documentation**: Learn the APIs, scripting patterns, and engine integration in the [Guides](https://vital-sandbox.com/docs).
 - **Community**: Got questions or want to connect? Join us on [Discord](https://discord.vital-sandbox.com).
+
+## Features
+
+Vital.wry extends upstream with additional features and fixes needed to integrate seamlessly with Vital.sandbox:
+- **Native webview**: Exposes the system's built-in webview inside Godot 4 — no bundled browser, no extra dependencies
+- **Two-way integration**: Full communication between JavaScript and GDScript
+- **Input forwarding**: Mouse and keyboard events forward correctly into the webview and back into Godot
+- **Deferred creation**: Webview construction is safely deferred on minimized windows and resumes without interruption once restored
+- **Z-index ordering**: Multiple webviews can be layered and reordered independently
 
 ## Building
 

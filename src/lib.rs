@@ -8,6 +8,7 @@ use godot::global::MouseButtonMask;
 use godot::init::*;
 use godot::prelude::*;
 use godot::classes::{Control, DisplayServer, IControl, InputEvent, InputEventMouseButton, InputEventMouseMotion, InputEventKey, ProjectSettings, Viewport};
+use godot::classes::display_server::WindowMode;
 use godot::global::{Key, MouseButton};
 use serde_json;
 use std::sync::{Arc, Mutex};
@@ -84,6 +85,21 @@ struct WebView {
     #[export]
     overlay: bool,
     webview_hwnd: Option<isize>,
+    // Set when build_webview() bails out because the window is minimized
+    // or the native webview controller failed to construct. While true,
+    // update_webview() retries creation every frame the window is no
+    // longer minimized, instead of leaving the node permanently broken.
+    webview_creation_pending: bool,
+    // Prevents re-logging the same construction failure every retry frame.
+    webview_creation_failed_logged: bool,
+    // set_visible() used to write straight through to the native webview
+    // and silently no-op if self.webview was still None (e.g. creation
+    // deferred because the window was minimized). That dropped the
+    // hidden request entirely, so once creation succeeded later the
+    // webview came up visible by default -- fullscreen, on top, and
+    // eating all input. This tracks the last requested state so it can
+    // be (re)applied the moment the native webview actually exists.
+    desired_visible: bool,
 }
 
 #[godot_api]
@@ -114,6 +130,9 @@ impl IControl for WebView {
             autoplay: false,
             overlay: false,
             webview_hwnd: None,
+            webview_creation_pending: false,
+            webview_creation_failed_logged: false,
+            desired_visible: true,
         }
     }
 
@@ -169,6 +188,16 @@ impl WebView {
 
     fn update_webview(&mut self) {
         if self.webview.is_none() {
+            if self.webview_creation_pending {
+                let window_mode = DisplayServer::singleton()
+                    .window_get_mode_ex()
+                    .window_id(self.window_id)
+                    .done();
+                if window_mode != WindowMode::MINIMIZED {
+                    godot_print!("[Godot WRY] update_webview(): retrying creation, window_id={} mode={:?}", self.window_id, window_mode);
+                    self.create_webview();
+                }
+            }
             return;
         }
 
@@ -217,6 +246,18 @@ impl WebView {
             .map(|w| w.get_window_id())
             .unwrap_or(0);
         self.window_id = window_id;
+
+        // WebView2 (and other backends) can't construct a controller against
+        // a minimized window -- the client rect is 0x0 and creation fails
+        // with E_INVALIDARG. Rather than attempt it (and previously panic),
+        // bail out quietly and let update_webview() retry once the window
+        // is restored/maximized.
+        let window_mode = display_server.window_get_mode_ex().window_id(window_id).done();
+        if window_mode == WindowMode::MINIMIZED {
+            godot_print!("[Godot WRY] build_webview(): window_id={} is minimized (mode={:?}), deferring creation", window_id, window_mode);
+            self.webview_creation_pending = true;
+            return;
+        }
 
         let window = GodotWindow::new(window_id);
 
@@ -451,7 +492,26 @@ impl WebView {
             godot_error!("[Godot WRY] You have entered both a URL and HTML code. You may only enter one at a time.")
         }
 
-        let webview = webview_builder.build_as_child(&window).unwrap();
+        let webview = match webview_builder.build_as_child(&window) {
+            Ok(webview) => webview,
+            Err(e) => {
+                // Fail completely and cleanly -- nothing below this point has
+                // run yet, so no HWND styles/overlay flags have been touched
+                // and no input is left silently blocked. Just mark pending
+                // so update_webview() retries next frame the window isn't
+                // minimized, instead of leaving a half-initialized node.
+                if !self.webview_creation_failed_logged {
+                    godot_warn!("[Godot WRY] Failed to create webview, will retry: {:?}", e);
+                    self.webview_creation_failed_logged = true;
+                }
+                self.webview_creation_pending = true;
+                return;
+            }
+        };
+
+        self.webview_creation_pending = false;
+        self.webview_creation_failed_logged = false;
+        godot_print!("[Godot WRY] build_webview(): native webview constructed for window_id={}", window_id);
 
         #[cfg(target_os = "windows")]
         {
@@ -480,6 +540,20 @@ impl WebView {
         }
 
         self.webview.replace(webview);
+        // Don't trust desired_visible here -- if creation was deferred
+        // (window was minimized), any set_visible()/hide()/show() call
+        // that happened in the meantime fired "visibility_changed" before
+        // create_webview() below ever connected to it, so that signal is
+        // permanently lost. is_visible_in_tree() reflects the CURRENT,
+        // engine-tracked state regardless of when it last changed, so
+        // sync from that instead the moment the webview actually exists.
+        let should_be_visible = self.base().is_visible_in_tree();
+        if let Some(webview) = &self.webview {
+            match webview.set_visible(should_be_visible) {
+                Ok(_) => godot_print!("[Godot WRY] build_webview(): synced visibility={} from Control.is_visible_in_tree()", should_be_visible),
+                Err(e) => godot_warn!("[Godot WRY] build_webview(): failed to sync visibility={}: {e}", should_be_visible),
+            }
+        }
         self.resize();
         self.apply_z_order();
     }
@@ -487,9 +561,11 @@ impl WebView {
     fn create_webview(&mut self) {
         self.build_webview();
         if self.webview.is_none() {
+            godot_print!("[Godot WRY] create_webview(): still no webview after build_webview() (pending={})", self.webview_creation_pending);
             return;
         }
 
+        godot_print!("[Godot WRY] create_webview(): webview exists, wiring resize/visibility signals");
         let mut viewport = self.base().get_tree().get_root().expect("Could not get viewport");
         viewport.connect("size_changed", &Callable::from_object_method(&*self.base(), "resize"));
 
@@ -593,7 +669,10 @@ impl WebView {
         if let Some(webview) = &self.webview {
             let visibility = self.base().is_visible_in_tree();
             match webview.set_visible(visibility) {
-                Ok(_) => self.resize(),
+                Ok(_) => {
+                    godot_print!("[Godot WRY] update_visibility(): visibility_changed fired, synced to {}", visibility);
+                    self.resize();
+                }
                 Err(e) => {
                     godot_warn!("[Godot WRY] Could not set webview visibility: {e}. \
                         If you are using Window.hide()/show(), reparent the WebView \
@@ -605,10 +684,28 @@ impl WebView {
     }
 
     #[func]
-    fn set_visible(&self, visibility: bool) {
+    fn set_visible(&mut self, visibility: bool) {
+        // Always record intent, even if the native webview doesn't exist
+        // yet (creation pending/minimized) -- it gets applied as soon as
+        // build_webview() finishes constructing it.
+        self.desired_visible = visibility;
         if let Some(webview) = &self.webview {
-            let _ = webview.set_visible(visibility);
+            match webview.set_visible(visibility) {
+                Ok(_) => godot_print!("[Godot WRY] set_visible({}) applied immediately (webview exists)", visibility),
+                Err(e) => godot_warn!("[Godot WRY] set_visible({}) failed on existing webview: {e}", visibility),
+            }
+        } else {
+            godot_print!("[Godot WRY] set_visible({}) recorded as desired_visible, but no webview exists yet -- will apply once constructed", visibility);
         }
+    }
+
+    // client.lua toggles via `set_visible(not is_visible())`. This must
+    // mirror desired_visible (not Godot's own Control::is_visible(), which
+    // set_visible() above never touches) or the toggle desyncs from the
+    // webview's actual shown/hidden state.
+    #[func]
+    fn is_visible(&self) -> bool {
+        self.desired_visible
     }
 
     #[func]

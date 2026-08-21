@@ -11,6 +11,7 @@ A cross-platform native webview extension built on WRY, designed to extend and c
 ## Features
 
 Vital.wry extends upstream with additional features and fixes needed to integrate seamlessly with Vital.sandbox:
+
 - **Native webview**: Exposes the system's built-in webview inside Godot 4 — no bundled browser, no extra dependencies
 - **Two-way integration**: Full communication between JavaScript and GDScript
 - **Input forwarding**: Mouse and keyboard events forward correctly into the webview and back into Godot
@@ -21,13 +22,10 @@ Vital.wry extends upstream with additional features and fixes needed to integrat
 
 Requires Python 3 and a Rust toolchain with the appropriate target for your platform.
 
-```sh
-# Windows
-build.bat --[debug/release/all]
-
-# macOS / Linux
-./build.sh --[debug/release/all]
-```
+| Platform | Command |
+| --- | --- |
+| Windows | `build.bat --[debug/release/all]` |
+| macOS / Linux | `./build.sh --[debug/release/all]` |
 
 ## Platform Support
 

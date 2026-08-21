@@ -204,7 +204,7 @@ impl WebView {
                     .window_id(self.window_id)
                     .done();
                 if window_mode != WindowMode::MINIMIZED {
-                    godot_print!("[Godot WRY] update_webview(): retrying creation, window_id={} mode={:?}", self.window_id, window_mode);
+                    debug_print!("[Godot WRY] update_webview(): retrying creation, window_id={} mode={:?}", self.window_id, window_mode);
                     self.create_webview();
                 }
             }
@@ -264,7 +264,7 @@ impl WebView {
         // is restored/maximized.
         let window_mode = display_server.window_get_mode_ex().window_id(window_id).done();
         if window_mode == WindowMode::MINIMIZED {
-            godot_print!("[Godot WRY] build_webview(): window_id={} is minimized (mode={:?}), deferring creation", window_id, window_mode);
+            debug_print!("[Godot WRY] build_webview(): window_id={} is minimized (mode={:?}), deferring creation", window_id, window_mode);
             self.webview_creation_pending = true;
             return;
         }
@@ -521,7 +521,7 @@ impl WebView {
 
         self.webview_creation_pending = false;
         self.webview_creation_failed_logged = false;
-        godot_print!("[Godot WRY] build_webview(): native webview constructed for window_id={}", window_id);
+        debug_print!("[Godot WRY] build_webview(): native webview constructed for window_id={}", window_id);
 
         #[cfg(target_os = "windows")]
         {
@@ -560,7 +560,7 @@ impl WebView {
         let should_be_visible = self.base().is_visible_in_tree();
         if let Some(webview) = &self.webview {
             match webview.set_visible(should_be_visible) {
-                Ok(_) => godot_print!("[Godot WRY] build_webview(): synced visibility={} from Control.is_visible_in_tree()", should_be_visible),
+                Ok(_) => debug_print!("[Godot WRY] build_webview(): synced visibility={} from Control.is_visible_in_tree()", should_be_visible),
                 Err(e) => godot_warn!("[Godot WRY] build_webview(): failed to sync visibility={}: {e}", should_be_visible),
             }
 
@@ -575,7 +575,7 @@ impl WebView {
                 // Defer to avoid reentrant bind_mut() panic: build_webview() holds &mut self,
                 // and focus_parent() can trigger a Godot callback that tries to borrow self again.
                 self.base_mut().call_deferred("focus_parent", &[]);
-                godot_print!("[Godot WRY] build_webview(): deferred OS focus return to parent window (should_be_visible={})", should_be_visible);
+                debug_print!("[Godot WRY] build_webview(): deferred OS focus return to parent window (should_be_visible={})", should_be_visible);
             }
         }
         self.resize();
@@ -589,11 +589,11 @@ impl WebView {
             if let Some(webview) = &self.webview {
                 match pending {
                     PendingLoad::Url(url) => {
-                        godot_print!("[Godot WRY] build_webview(): replaying deferred load_url({})", url);
+                        debug_print!("[Godot WRY] build_webview(): replaying deferred load_url({})", url);
                         let _ = webview.load_url(&url);
                     }
                     PendingLoad::Html(html) => {
-                        godot_print!("[Godot WRY] build_webview(): replaying deferred load_html(...)");
+                        debug_print!("[Godot WRY] build_webview(): replaying deferred load_html(...)");
                         let _ = webview.load_html(&html);
                     }
                 }
@@ -604,11 +604,11 @@ impl WebView {
     fn create_webview(&mut self) {
         self.build_webview();
         if self.webview.is_none() {
-            godot_print!("[Godot WRY] create_webview(): still no webview after build_webview() (pending={})", self.webview_creation_pending);
+            debug_print!("[Godot WRY] create_webview(): still no webview after build_webview() (pending={})", self.webview_creation_pending);
             return;
         }
 
-        godot_print!("[Godot WRY] create_webview(): webview exists, wiring resize/visibility signals");
+        debug_print!("[Godot WRY] create_webview(): webview exists, wiring resize/visibility signals");
         let mut viewport = self.base().get_tree().get_root().expect("Could not get viewport");
         viewport.connect("size_changed", &Callable::from_object_method(&*self.base(), "resize"));
 
@@ -713,7 +713,7 @@ impl WebView {
             let visibility = self.base().is_visible_in_tree();
             match webview.set_visible(visibility) {
                 Ok(_) => {
-                    godot_print!("[Godot WRY] update_visibility(): visibility_changed fired, synced to {}", visibility);
+                    debug_print!("[Godot WRY] update_visibility(): visibility_changed fired, synced to {}", visibility);
                     if !visibility {
                         // Defer to avoid reentrant bind_mut() panic when
                         // focus_parent() triggers a Godot callback during
@@ -740,11 +740,11 @@ impl WebView {
         self.desired_visible = visibility;
         if let Some(webview) = &self.webview {
             match webview.set_visible(visibility) {
-                Ok(_) => godot_print!("[Godot WRY] set_visible({}) applied immediately (webview exists)", visibility),
+                Ok(_) => debug_print!("[Godot WRY] set_visible({}) applied immediately (webview exists)", visibility),
                 Err(e) => godot_warn!("[Godot WRY] set_visible({}) failed on existing webview: {e}", visibility),
             }
         } else {
-            godot_print!("[Godot WRY] set_visible({}) recorded as desired_visible, but no webview exists yet -- will apply once constructed", visibility);
+            debug_print!("[Godot WRY] set_visible({}) recorded as desired_visible, but no webview exists yet -- will apply once constructed", visibility);
         }
     }
 
@@ -763,7 +763,7 @@ impl WebView {
         if let Some(webview) = &self.webview {
             let _ = webview.load_html(&html_str);
         } else {
-            godot_print!("[Godot WRY] load_html() called before webview exists -- deferring until construction completes");
+            debug_print!("[Godot WRY] load_html() called before webview exists -- deferring until construction completes");
             self.pending_load = Some(PendingLoad::Html(html_str));
         }
     }
@@ -789,7 +789,7 @@ impl WebView {
         if let Some(webview) = &self.webview {
             let _ = webview.load_url(&url_str);
         } else {
-            godot_print!("[Godot WRY] load_url() called before webview exists -- deferring until construction completes");
+            debug_print!("[Godot WRY] load_url() called before webview exists -- deferring until construction completes");
             self.pending_load = Some(PendingLoad::Url(url_str));
         }
     }

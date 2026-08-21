@@ -178,9 +178,7 @@ impl IControl for WebView {
                 let rect = self.base().get_global_rect();
 
                 if !rect.contains_point(mouse_pos) {
-                    if let Some(webview) = &self.webview {
-                        let _ = webview.focus_parent();
-                    }
+                    self.base_mut().call_deferred("focus_parent", &[]);
                 }
             }
         }
@@ -574,8 +572,10 @@ impl WebView {
             // supposed to be visible/focused right now, explicitly return
             // focus to the parent (game) window immediately.
             if !should_be_visible || !self.focused_when_created {
-                let _ = webview.focus_parent();
-                godot_print!("[Godot WRY] build_webview(): returned OS focus to parent window (should_be_visible={})", should_be_visible);
+                // Defer to avoid reentrant bind_mut() panic: build_webview() holds &mut self,
+                // and focus_parent() can trigger a Godot callback that tries to borrow self again.
+                self.base_mut().call_deferred("focus_parent", &[]);
+                godot_print!("[Godot WRY] build_webview(): deferred OS focus return to parent window (should_be_visible={})", should_be_visible);
             }
         }
         self.resize();
@@ -715,7 +715,10 @@ impl WebView {
                 Ok(_) => {
                     godot_print!("[Godot WRY] update_visibility(): visibility_changed fired, synced to {}", visibility);
                     if !visibility {
-                        let _ = webview.focus_parent();
+                        // Defer to avoid reentrant bind_mut() panic when
+                        // focus_parent() triggers a Godot callback during
+                        // visibility_changed signal dispatch.
+                        self.base().clone().call_deferred("focus_parent", &[]);
                     }
                     self.resize();
                 }

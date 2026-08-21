@@ -16,7 +16,7 @@ Vital.wry extends upstream with additional features and fixes needed to integrat
 - **Documentation**: Learn the APIs, scripting patterns, and engine integration in the [Guides](https://vital-sandbox.com/docs).
 - **Community**: Got questions or want to connect? Join us on [Discord](https://discord.vital-sandbox.com).
 
-## Building from Source
+## Building
 
 Requires Python 3 and a Rust toolchain with the appropriate target for your platform.
 

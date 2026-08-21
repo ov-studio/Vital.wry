@@ -565,6 +565,18 @@ impl WebView {
                 Ok(_) => godot_print!("[Godot WRY] build_webview(): synced visibility={} from Control.is_visible_in_tree()", should_be_visible),
                 Err(e) => godot_warn!("[Godot WRY] build_webview(): failed to sync visibility={}: {e}", should_be_visible),
             }
+
+            // WebView2's controller construction can silently steal OS
+            // input focus for its own HWND, even when we just set it
+            // invisible above -- hiding a window doesn't hand focus back.
+            // Without this, the game window is left unfocused until the
+            // user manually alt-tabs away and back. If the webview isn't
+            // supposed to be visible/focused right now, explicitly return
+            // focus to the parent (game) window immediately.
+            if !should_be_visible || !self.focused_when_created {
+                let _ = webview.focus_parent();
+                godot_print!("[Godot WRY] build_webview(): returned OS focus to parent window (should_be_visible={})", should_be_visible);
+            }
         }
         self.resize();
         self.apply_z_order();
@@ -702,6 +714,9 @@ impl WebView {
             match webview.set_visible(visibility) {
                 Ok(_) => {
                     godot_print!("[Godot WRY] update_visibility(): visibility_changed fired, synced to {}", visibility);
+                    if !visibility {
+                        let _ = webview.focus_parent();
+                    }
                     self.resize();
                 }
                 Err(e) => {

@@ -2,11 +2,8 @@
 
 default: build
 
-build *args="--release":
+build *args:
 	python build.py {{args}}
-
-build-all:
-	python build.py --all
 
 clean:
 	cd src && cargo clean

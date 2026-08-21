@@ -61,8 +61,6 @@ struct WebView {
     #[export]
     html: GString,
     #[export]
-    data_directory: GString,
-    #[export]
     transparent: bool,
     #[export]
     background_color: Color,
@@ -128,7 +126,6 @@ impl IControl for WebView {
             full_window_size: true,
             url: "".into(),
             html: "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>html,body{margin:0;padding:0;background:transparent}</style></head><body></body></html>".into(),
-            data_directory: "user://".into(),
             transparent: false,
             background_color: Color::from_rgb(1.0, 1.0, 1.0),
             devtools: true,
@@ -288,29 +285,19 @@ impl WebView {
         }
 
         let base = Arc::new(Mutex::new(self.base().clone()));
-        let resolved_data_directory: Option<PathBuf> = if !self.data_directory.is_empty() {
-            let data_directory = self.data_directory.to_string();
 
-            if data_directory.starts_with("user://") {
-                let path_without_prefix = data_directory.trim_start_matches("user://");
+        // WebView2's user data folder used to be left unset, which makes the
+        // WebView2 loader fall back to creating a "<exe_name>.WebView2"
+        // folder right next to the executable. Pin it under the project's
+        // user:// directory instead (user://webview) so it lands in a
+        // predictable, writable spot regardless of where the game is installed.
+        let project_settings = ProjectSettings::singleton();
+        let base_path = project_settings.globalize_path("user://").to_string();
+        let mut resolved_data_directory = PathBuf::from(base_path);
+        resolved_data_directory.push("webview");
+        std::fs::create_dir_all(&resolved_data_directory).ok();
 
-                let project_settings = ProjectSettings::singleton();
-                let base_path = project_settings.globalize_path("user://").to_string();
-                let mut absolute_path = PathBuf::from(base_path);
-                absolute_path.push(path_without_prefix);
-
-                std::fs::create_dir_all(&absolute_path).ok();
-
-                Some(absolute_path)
-            } else {
-                let path = PathBuf::from(&data_directory);
-                std::fs::create_dir_all(&path).ok();
-                Some(path)
-            }
-        } else {
-            None
-        };
-        let mut context = WebContext::new(resolved_data_directory);
+        let mut context = WebContext::new(Some(resolved_data_directory));
         let mut webview_builder = WebViewBuilder::new_with_web_context(&mut context)
             .with_transparent(self.transparent)
             .with_devtools(self.devtools)

@@ -7,6 +7,7 @@ use godot::global::MouseButtonMask;
 use godot::init::*;
 use godot::prelude::*;
 use godot::classes::{Control, DisplayServer, IControl, InputEvent, InputEventMouseButton, InputEventMouseMotion, InputEventKey, ProjectSettings, Viewport};
+use godot::classes::display_server::WindowMode;
 use godot::global::{Key, MouseButton};
 use lazy_static::lazy_static;
 use serde_json;
@@ -84,6 +85,9 @@ struct WebView {
     #[export]
     overlay: bool,
     webview_hwnd: Option<isize>,
+    webview_pending: bool,
+    webview_retry_timer: f64,
+    signals_connected: bool,
 }
 
 #[godot_api]
@@ -114,6 +118,9 @@ impl IControl for WebView {
             autoplay: false,
             overlay: false,
             webview_hwnd: None,
+            webview_pending: false,
+            webview_retry_timer: 0.0,
+            signals_connected: false,
         }
     }
 
@@ -132,7 +139,17 @@ impl IControl for WebView {
         }
     }
 
-    fn process(&mut self, _delta: f64) {
+    fn process(&mut self, delta: f64) {
+        if self.webview.is_none() {
+            if self.webview_pending {
+                self.webview_retry_timer -= delta;
+                if self.webview_retry_timer <= 0.0 {
+                    self.create_webview();
+                    self.webview_retry_timer = 0.25;
+                }
+            }
+            return;
+        }
         self.update_webview();
     }
 
@@ -217,6 +234,11 @@ impl WebView {
             .map(|w| w.get_window_id())
             .unwrap_or(0);
         self.window_id = window_id;
+
+        if display_server.window_get_mode_ex().window_id(window_id).done() == WindowMode::MINIMIZED {
+            self.webview_pending = true;
+            return;
+        }
 
         let window = GodotWindow::new(window_id);
 
@@ -451,7 +473,20 @@ impl WebView {
             godot_error!("[Godot WRY] You have entered both a URL and HTML code. You may only enter one at a time.")
         }
 
-        let webview = webview_builder.build_as_child(&window).unwrap();
+        let webview = match webview_builder.build_as_child(&window) {
+            Ok(webview) => webview,
+            Err(e) => {
+                godot_warn!(
+                    "[Godot WRY] Failed to create webview: {e}. This commonly happens \
+                    if the window was minimized right as the webview was being created; \
+                    it will be retried automatically once the window is restored."
+                );
+                self.webview_pending = true;
+                return;
+            }
+        };
+
+        self.webview_pending = false;
 
         #[cfg(target_os = "windows")]
         {
@@ -486,9 +521,11 @@ impl WebView {
 
     fn create_webview(&mut self) {
         self.build_webview();
-        if self.webview.is_none() {
+
+        if self.signals_connected || (self.webview.is_none() && !self.webview_pending) {
             return;
         }
+        self.signals_connected = true;
 
         let mut viewport = self.base().get_tree().get_root().expect("Could not get viewport");
         viewport.connect("size_changed", &Callable::from_object_method(&*self.base(), "resize"));

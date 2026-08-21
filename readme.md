@@ -1,6 +1,6 @@
 ## Overview
 
-A cross-platform native webview extension built on [WRY](https://github.com/tauri-apps/wry), designed to extend and complement the Vital.sandbox ecosystem.
+A cross-platform native webview extension built on WRY, designed to extend and complement the Vital.sandbox ecosystem.
 
 Vital.wry extends upstream with additional features and fixes needed to integrate seamlessly with Vital.sandbox:
 

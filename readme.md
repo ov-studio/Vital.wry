@@ -1,8 +1,8 @@
 ## Overview
 
-A cross-platform native webview extension built on WRY, designed to extend and complement the Vital.sandbox ecosystem.
+A native webview extension for Godot 4, built on WRY to extend and complement the Vital.sandbox ecosystem.
 
-Render HTML, CSS, and JavaScript natively inside Godot 4 with full two-way GDScript integration — using the system's built-in webview with no extra dependencies.
+Render HTML, CSS, and JavaScript natively inside Godot 4 — using the system's built-in webview with no extra dependencies.
 
 ## Getting Started
 
@@ -12,7 +12,7 @@ Render HTML, CSS, and JavaScript natively inside Godot 4 with full two-way GDScr
 
 ## Features
 
-Vital.wry extends upstream with additional features and fixes needed to integrate seamlessly with Vital.sandbox:
+Vital.wry extends upstream with additional features and fixes required for seamless integration:
 
 - **Native webview**: Exposes the system's built-in webview inside Godot 4 — no bundled browser, no extra dependencies
 - **Two-way integration**: Full communication between JavaScript and GDScript

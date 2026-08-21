@@ -17,7 +17,7 @@ Render HTML, CSS, and JavaScript natively inside Godot 4 — using the system's 
 - **Input forwarding**: Mouse and keyboard events forward correctly into the webview and back into Godot
 - **Deferred creation**: Webview construction is safely deferred on minimized windows and resumes without interruption once restored
 - **Z-index ordering**: Multiple webviews can be layered and reordered independently
-- **Stable profile path**: WebView2 data stored at `user://webview` instead of defaulting next to the executable
+- **Stable profile path**: WebView data stored at `user://webview` instead of defaulting next to the executable
 
 ## Building
 

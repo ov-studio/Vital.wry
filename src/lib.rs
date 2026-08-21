@@ -285,12 +285,6 @@ impl WebView {
         }
 
         let base = Arc::new(Mutex::new(self.base().clone()));
-
-        // WebView2's user data folder used to be left unset, which makes the
-        // WebView2 loader fall back to creating a "<exe_name>.WebView2"
-        // folder right next to the executable. Pin it under the project's
-        // user:// directory instead (user://webview) so it lands in a
-        // predictable, writable spot regardless of where the game is installed.
         let project_settings = ProjectSettings::singleton();
         let base_path = project_settings.globalize_path("user://").to_string();
         let mut resolved_data_directory = PathBuf::from(base_path);

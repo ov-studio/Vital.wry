@@ -1,14 +1,8 @@
 ## Overview
 
-A cross-platform native webview extension for Godot 4, built on [WRY](https://github.com/tauri-apps/wry).
+A cross-platform native webview extension built on [WRY](https://github.com/tauri-apps/wry), designed to extend and complement the Vital.sandbox ecosystem.
 
-Vital.wry lets you render HTML, CSS, and JavaScript natively inside your game using the system's built-in webview — no bundled browser, no extra dependencies — with full two-way communication between JavaScript and GDScript.
-
-It exists to push beyond the limits of upstream WRY, addressing gaps and edge cases that the base library leaves unresolved:
-
-- **Input forwarding**: Proper mouse and keyboard event forwarding into the webview and back into Godot
-- **Minimized window handling**: Webview creation is safely deferred when the window is minimized and resumes without interruption once restored
-- **Z-index ordering**: Multiple webviews can be layered and reordered independently
+Vital.wry exposes the system's native webview inside Godot 4, enabling HTML, CSS, and JavaScript UIs with full two-way GDScript integration. It goes beyond upstream WRY to fix gaps the base library leaves unresolved — proper input forwarding, safe deferred creation on minimized windows, and independent z-index ordering across multiple webviews.
 
 ## Getting Started
 
@@ -39,5 +33,3 @@ build.bat --[debug/release/all]
 | Linux (X11) | Supported | WebKitGTK |
 | Android | Planned | — |
 | iOS | Planned | — |
-
-Linux requires [WebKitGTK](https://webkitgtk.org). Transparency is not currently supported on Linux.

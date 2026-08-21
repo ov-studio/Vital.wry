@@ -13,7 +13,7 @@ Render HTML, CSS, and JavaScript natively inside Godot 4 — using the system's 
 ## Features
 
 - **Native webview**: Exposes the system's built-in webview inside Godot 4 — no bundled browser, no extra dependencies
-- **Two-way integration**: Full communication between JavaScript and GDScript
+- **Two-way integration**: Full communication between JavaScript and C++
 - **Input forwarding**: Mouse and keyboard events forward correctly into the webview and back into Godot
 - **Deferred creation**: Webview construction is safely deferred on minimized windows and resumes without interruption once restored
 - **Z-index ordering**: Multiple webviews can be layered and reordered independently

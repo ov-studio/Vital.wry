@@ -28,8 +28,6 @@ build.bat --[debug/release/all]
 ./build.sh --[debug/release/all]
 ```
 
-`--all` builds both debug and release in sequence. Compiled binaries are staged into `.build/` under the platform subdirectory.
-
 ## Platform Support
 
 | Platform | Support | Web Engine |

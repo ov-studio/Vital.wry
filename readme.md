@@ -1,6 +1,6 @@
 ## Overview
 
-A cross-platform native webview extension built on [WRY](https://github.com/tauri-apps/wry), designed to extend and complement the Vital.sandbox ecosystem.
+A cross-platform native webview extension built on WRY, designed to extend and complement the Vital.sandbox ecosystem.
 
 Vital.wry exposes the system's native webview inside Godot 4, enabling HTML, CSS, and JavaScript UIs with full two-way GDScript integration. It goes beyond upstream WRY to fix gaps the base library leaves unresolved — proper input forwarding, safe deferred creation on minimized windows, and independent z-index ordering across multiple webviews.
 

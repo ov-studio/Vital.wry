@@ -39,5 +39,3 @@ build.bat --[debug/release/all]
 | Linux (X11) | Supported | WebKitGTK |
 | Android | Planned | — |
 | iOS | Planned | — |
-
-Linux requires [WebKitGTK](https://webkitgtk.org). Transparency is not currently supported on Linux.

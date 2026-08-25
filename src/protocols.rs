@@ -18,12 +18,12 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
     );
     let mut full_path = root.join(&path);
 
-    debug_print!("[WRY Protocol] Request: {} | scheme={} host={} path={}", uri, uri.scheme_str().unwrap_or("?"), uri.host().unwrap_or("?"), uri.path());
-    debug_print!("[WRY Protocol] Resolved full_path: {:?}", full_path);
+    wry_protocol_debug!("Request: {} | scheme={} host={} path={}", uri, uri.scheme_str().unwrap_or("?"), uri.host().unwrap_or("?"), uri.path());
+    wry_protocol_debug!("Resolved full_path: {:?}", full_path);
 
     let mut full_path_str = GString::from(full_path.to_str().unwrap_or_default());
     if !FileAccess::file_exists(&full_path_str) {
-        debug_print!("[WRY Protocol] File not found: {:?}, trying index.html fallback", full_path);
+        wry_protocol_debug!("File not found: {:?}, trying index.html fallback", full_path);
         let index_path = full_path.join("index.html");
         let index_path_str = GString::from(index_path.to_str().unwrap_or_default());
         if FileAccess::file_exists(&index_path_str) {
@@ -33,7 +33,7 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
                     uri.host().unwrap_or_default(),
                     uri.path()
                 );
-                debug_print!("[WRY Protocol] No trailing slash, JS redirect -> {}", redirect_url);
+                wry_protocol_debug!("No trailing slash, JS redirect -> {}", redirect_url);
                 let redirect_html = format!(
                     "<!DOCTYPE html><html><head><script>location.replace(\"{}\")</script></head></html>",
                     redirect_url
@@ -44,7 +44,7 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
                     .body(Cow::from(redirect_html.into_bytes()))
                     .expect("Failed to build redirect response");
             } else {
-                debug_print!("[WRY Protocol] Trailing slash present, serving index.html directly: {:?}", index_path);
+                wry_protocol_debug!("Trailing slash present, serving index.html directly: {:?}", index_path);
             }
             full_path = index_path;
             full_path_str = index_path_str;
@@ -52,7 +52,7 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
     }
 
     if !FileAccess::file_exists(&full_path_str) {
-        debug_print!("[WRY Protocol] 404 Not Found: {:?}", full_path);
+        wry_protocol_debug!("404 Not Found: {:?}", full_path);
         return http::Response::builder()
             .header(CONTENT_TYPE, "text/plain")
             .status(404)

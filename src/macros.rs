@@ -6,9 +6,15 @@ macro_rules! debug_print {
     };
 }
 
+macro_rules! tagged_debug {
+    ($tag:literal, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        debug_print!(concat!("[", $tag, "] ", $fmt) $(, $arg)*);
+    };
+}
+
 macro_rules! wry_debug {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        debug_print!(concat!("[Vital.wry] ", $fmt) $(, $arg)*);
+        tagged_debug!("Vital.wry", $fmt $(, $arg)*);
     };
 }
 
@@ -21,5 +27,11 @@ macro_rules! wry_warn {
 macro_rules! wry_error {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
         godot::prelude::godot_error!(concat!("[Vital.wry] ", $fmt) $(, $arg)*);
+    };
+}
+
+macro_rules! wry_protocol_debug {
+    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        tagged_debug!("Vital.wry.protocol", $fmt $(, $arg)*);
     };
 }

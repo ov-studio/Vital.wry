@@ -25,8 +25,8 @@ Requires Python 3 and a Rust toolchain with the appropriate target for your plat
 
 | Platform | Command |
 | --- | --- |
-| Windows | `build.bat --[debug/release/all]` |
-| macOS / Linux | `./build.sh --[debug/release/all]` |
+| Windows | `build --[debug/release/all]` |
+| macOS / Linux | `bash build.sh --[debug/release/all]` |
 
 ## Platform Support
 

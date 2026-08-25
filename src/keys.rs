@@ -7,7 +7,6 @@ lazy_static! {
     pub static ref CURRENT_BUTTON_MASK: Mutex<MouseButtonMask> = Mutex::new(MouseButtonMask::default());
 
     pub static ref GODOT_KEYS: HashMap<&'static str, Key> = HashMap::from([
-
         ("a", Key::A),
         ("A", Key::A),
         ("b", Key::B),

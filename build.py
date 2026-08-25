@@ -35,9 +35,9 @@ PLATFORM_TARGETS = {
 }
 
 PLATFORM_OUTPUTS = {
-    "Windows": ("windows", "godot_wry.dll",       "vital.wry.{profile}.x86_64.dll"),
-    "Linux":   ("linux",   "libgodot_wry.so",      "vital.wry.{profile}.x86_64.so"),
-    "Darwin":  ("macos",   "libgodot_wry.dylib",   "vital.wry.{profile}.dylib"),
+    "Windows": ("windows", "vital_wry.dll",       "vital.wry.{profile}.x86_64.dll"),
+    "Linux":   ("linux",   "libvital_wry.so",      "vital.wry.{profile}.x86_64.so"),
+    "Darwin":  ("macos",   "libvital_wry.dylib",   "vital.wry.{profile}.dylib"),
 }
 
 # ── Build ─────────────────────────────────────────────────────────────────────

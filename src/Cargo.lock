@@ -723,7 +723,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "godot_wry"
+name = "vital_wry"
 version = "0.1.0"
 dependencies = [
  "godot",

@@ -134,7 +134,7 @@ impl IControl for WebView {
             zoom_hotkeys: false,
             clipboard: true,
             incognito: false,
-            focused_when_created: true,
+            focused_when_created: false,
             autoplay: false,
             overlay: false,
             webview_hwnd: None,

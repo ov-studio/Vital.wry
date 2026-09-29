@@ -7,7 +7,7 @@ mod protocols;
 use godot::global::MouseButtonMask;
 use godot::init::*;
 use godot::prelude::*;
-use godot::classes::{Control, DisplayServer, IControl, InputEvent, InputEventMouseButton, InputEventMouseMotion, InputEventKey, ProjectSettings, Viewport};
+use godot::classes::{Control, DisplayServer, IControl, Input, InputEvent, InputEventMouseButton, InputEventMouseMotion, InputEventKey, ProjectSettings, Viewport};
 use godot::classes::display_server::WindowMode;
 use godot::global::{Key, MouseButton};
 use serde_json;
@@ -104,6 +104,10 @@ struct WebView {
     // This stores whichever one was last requested so build_webview() can
     // replay it the moment the native webview actually gets constructed.
     pending_load: Option<PendingLoad>,
+    // Whether the webview currently holds OS focus (set by focus(), cleared
+    // by focus_parent()). Used to release held game input only on the actual
+    // game -> webview focus transition, not on redundant focus() calls.
+    os_focused: std::cell::Cell<bool>,
 }
 
 enum PendingLoad {
@@ -142,6 +146,7 @@ impl IControl for WebView {
             webview_creation_failed_logged: false,
             desired_visible: true,
             pending_load: None,
+            os_focused: std::cell::Cell::new(false),
         }
     }
 
@@ -702,6 +707,12 @@ impl WebView {
                         // focus_parent() triggers a Godot callback during
                         // visibility_changed signal dispatch.
                         self.base().clone().call_deferred("focus_parent", &[]);
+                    } else if !self.overlay {
+                        // Showing a webview (usually from a key press) moves
+                        // input to it, so the key-up never reaches Godot.
+                        // Deferred so release handlers don't re-enter the
+                        // Lua callback that triggered this.
+                        queue_release_held_input(self.base().get_global_mouse_position());
                     }
                     self.resize();
                 }
@@ -809,6 +820,9 @@ impl WebView {
     #[func]
     fn focus(&self) {
         if let Some(webview) = &self.webview {
+            if !self.os_focused.replace(true) && !self.overlay {
+                queue_release_held_input(self.base().get_global_mouse_position());
+            }
             let _ = webview.focus();
         }
     }
@@ -816,6 +830,7 @@ impl WebView {
     #[func]
     fn focus_parent(&self) {
         if let Some(webview) = &self.webview {
+            self.os_focused.set(false);
             let _ = webview.focus_parent();
         }
     }
@@ -910,6 +925,33 @@ impl WebView {
             let _ = all;
         }
     }
+}
+
+fn queue_release_held_input(mouse_position: Vector2) {
+    Callable::from_fn("release_held_input", move |_args| {
+        let mut input = Input::singleton();
+        let mut seen: Vec<Key> = Vec::new();
+        for &key in GODOT_KEYS.values() {
+            if key == Key::NONE || seen.contains(&key) { continue; }
+            seen.push(key);
+            if !input.is_key_pressed(key) { continue; }
+            let mut event = InputEventKey::new_gd();
+            event.set_keycode(key);
+            event.set_pressed(false);
+            input.parse_input_event(&event);
+        }
+
+        for button in [MouseButton::LEFT, MouseButton::RIGHT, MouseButton::MIDDLE] {
+            if !input.is_mouse_button_pressed(button) { continue; }
+            let mut event = InputEventMouseButton::new_gd();
+            event.set_button_index(button);
+            event.set_position(mouse_position);
+            event.set_global_position(mouse_position);
+            event.set_pressed(false);
+            input.parse_input_event(&event);
+        }
+    })
+    .call_deferred(&[]);
 }
 
 fn send_wheel_event(

@@ -1,3 +1,10 @@
+//! Vital.wry: a Godot `WebView` control backed by `wry` (WebView2 / WebKit).
+//!
+//! The native webview is a child window of the Godot window. It is created in `ready()`
+//! (deferred while the window is minimized), kept in sync with the control's rect and
+//! visibility every frame, and ordered against other webviews via `window_z_index`.
+//! Mouse/keyboard events from the page are forwarded to Godot as input events.
+
 #[macro_use]
 mod macros;
 mod godot_window;
@@ -8,9 +15,8 @@ use godot::global::MouseButtonMask;
 use godot::init::*;
 use godot::prelude::*;
 use godot::classes::{Control, DisplayServer, IControl, Input, InputEvent, InputEventMouseButton, InputEventMouseMotion, InputEventKey, ProjectSettings, Viewport};
-use godot::classes::display_server::WindowMode;
+use godot::classes::display_server::{HandleType, WindowMode};
 use godot::global::{Key, MouseButton};
-use serde_json;
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use wry::{WebViewBuilder, WebContext, Rect, PageLoadEvent};
@@ -38,9 +44,11 @@ extern "system" {}
 
 struct VitalWry;
 
+/// GDExtension entry point.
 #[gdextension]
 unsafe impl ExtensionLibrary for VitalWry {}
 
+/// Control that hosts a native webview. Exposed to Godot as `WebView`.
 #[derive(GodotClass)]
 #[class(base=Control)]
 struct WebView {
@@ -83,33 +91,25 @@ struct WebView {
     #[export]
     overlay: bool,
     webview_hwnd: Option<isize>,
-    // Set when build_webview() bails out because the window is minimized
-    // or the native webview controller failed to construct. While true,
-    // update_webview() retries creation every frame the window is no
-    // longer minimized, instead of leaving the node permanently broken.
+    // True while native webview creation is deferred (window minimized) or has
+    // failed. update_webview() retries every frame until it succeeds.
     webview_creation_pending: bool,
-    // Prevents re-logging the same construction failure every retry frame.
+    // Ensures a construction failure is logged once, not on every retry frame.
     webview_creation_failed_logged: bool,
-    // set_visible() used to write straight through to the native webview
-    // and silently no-op if self.webview was still None (e.g. creation
-    // deferred because the window was minimized). That dropped the
-    // hidden request entirely, so once creation succeeded later the
-    // webview came up visible by default -- fullscreen, on top, and
-    // eating all input. This tracks the last requested state so it can
-    // be (re)applied the moment the native webview actually exists.
+    // Last visibility requested through set_visible(). Kept so the request
+    // isn't lost if it arrives before the native webview exists, and so that
+    // is_visible() reports the requested state to scripts.
     desired_visible: bool,
-    // If load_url()/load_html() is called before self.webview exists yet
-    // (creation deferred while minimized), the call used to just vanish --
-    // there was nothing to apply it to and nothing tracking it for later.
-    // This stores whichever one was last requested so build_webview() can
-    // replay it the moment the native webview actually gets constructed.
+    // Most recent load_url()/load_html() request made before the native
+    // webview existed. Replayed by build_webview() once construction succeeds.
     pending_load: Option<PendingLoad>,
-    // Whether the webview currently holds OS focus (set by focus(), cleared
-    // by focus_parent()). Used to release held game input only on the actual
-    // game -> webview focus transition, not on redundant focus() calls.
+    // Whether the webview currently holds OS focus (set by focus(), cleared by
+    // focus_parent()). Held game input is released only on the game -> webview
+    // transition, not on repeated focus() calls.
     os_focused: std::cell::Cell<bool>,
 }
 
+/// A load request made before the native webview existed.
 enum PendingLoad {
     Url(String),
     Html(String),
@@ -213,6 +213,9 @@ impl WebView {
             return;
         }
 
+        #[cfg(target_os = "windows")]
+        strip_parent_clip_children(self.window_id);
+
         let viewport_size = self.base().get_window()
             .map(|w| w.get_size())
             .unwrap_or_else(|| {
@@ -259,11 +262,9 @@ impl WebView {
             .unwrap_or(0);
         self.window_id = window_id;
 
-        // WebView2 (and other backends) can't construct a controller against
-        // a minimized window -- the client rect is 0x0 and creation fails
-        // with E_INVALIDARG. Rather than attempt it (and previously panic),
-        // bail out quietly and let update_webview() retry once the window
-        // is restored/maximized.
+        // A minimized window has a 0x0 client rect, which makes WebView2 controller
+        // creation fail (E_INVALIDARG). Defer; update_webview() retries once the
+        // window is restored.
         let window_mode = display_server.window_get_mode_ex().window_id(window_id).done();
         if window_mode == WindowMode::MINIMIZED {
             wry_debug!("build_webview(): window_id={} is minimized (mode={:?}), deferring creation", window_id, window_mode);
@@ -274,20 +275,7 @@ impl WebView {
         let window = GodotWindow::new(window_id);
 
         #[cfg(target_os = "windows")]
-        {
-            let handle = window.window_handle().unwrap().as_raw();
-            let raw_handle: HWND = match handle {
-                RawWindowHandle::Win32(win32) => HWND(win32.hwnd.get() as _),
-                _ => {
-                    panic!("Unsupported window handle type");
-                }
-            };
-
-            unsafe {
-                let current_style = GetWindowLongPtrA(raw_handle, GWL_STYLE);
-                SetWindowLongPtrA(raw_handle, GWL_STYLE, current_style & !0x02000000);
-            };
-        }
+        strip_parent_clip_children(window_id);
 
         let base = Arc::new(Mutex::new(self.base().clone()));
         let project_settings = ProjectSettings::singleton();
@@ -321,7 +309,7 @@ impl WebView {
                 move |req: Request<String>| {
                     let mut base = base.lock().unwrap();
                     let body = req.body().as_str();
-                    
+
                     if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
                         if let Some(event_type) = json_value.get("type").and_then(|t| t.as_str()) {
                             let global_pos = base.get_global_position();
@@ -335,25 +323,25 @@ impl WebView {
                                 "_mouse_move" => {
                                     let movement_x = json_value.get("movementX").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
                                     let movement_y = json_value.get("movementY").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                                    
+
                                     let mut event = InputEventMouseMotion::new_gd();
                                     event.set_position(Vector2::new(vp_x, vp_y));
                                     event.set_global_position(Vector2::new(vp_x, vp_y));
-                                    
+
                                     let button_mask = CURRENT_BUTTON_MASK.lock().unwrap();
                                     event.set_button_mask(*button_mask);
 
                                     event.set_relative(Vector2::new(movement_x, movement_y));
-                                    
+
                                     if let Some(mut viewport) = base.get_viewport() {
                                         viewport.push_input(&event);
                                     }
                                     return;
                                 },
-                                
+
                                 "_mouse_down" | "_mouse_up" => {
                                     let button = json_value.get("button").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                                    
+
                                     let godot_button = match button {
                                         0 => MouseButton::LEFT,
                                         1 => MouseButton::MIDDLE,
@@ -362,7 +350,7 @@ impl WebView {
                                         4 => MouseButton::WHEEL_DOWN,
                                         _ => MouseButton::LEFT,
                                     };
-                                    
+
                                     let pressed = event_type == "_mouse_down";
                                     let mask = match godot_button {
                                         MouseButton::LEFT => MouseButtonMask::LEFT,
@@ -370,7 +358,7 @@ impl WebView {
                                         MouseButton::MIDDLE => MouseButtonMask::MIDDLE,
                                         _ => MouseButtonMask::default(),
                                     };
-                                    
+
                                     if godot_button != MouseButton::WHEEL_UP && godot_button != MouseButton::WHEEL_DOWN {
                                         let mut button_mask = CURRENT_BUTTON_MASK.lock().unwrap();
                                         if pressed {
@@ -396,16 +384,16 @@ impl WebView {
                                             }
                                         }
                                     }
-                                    
+
                                     let mut event = InputEventMouseButton::new_gd();
                                     event.set_button_index(godot_button);
                                     event.set_position(Vector2::new(vp_x, vp_y));
                                     event.set_global_position(Vector2::new(vp_x, vp_y));
                                     event.set_pressed(pressed);
-                                    
+
                                     let button_mask = CURRENT_BUTTON_MASK.lock().unwrap();
                                     event.set_button_mask(*button_mask);
-                                    
+
                                     if let Some(mut viewport) = base.get_viewport() {
                                         viewport.push_input(&event);
                                     }
@@ -445,28 +433,28 @@ impl WebView {
                                 "_key_down" | "_key_up" => {
                                     let key_str = json_value.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     let mut event = InputEventKey::new_gd();
-                                    
+
                                     let godot_key = GODOT_KEYS.get(key_str).copied().unwrap_or(Key::NONE);
-                                    
+
                                     event.set_keycode(godot_key);
                                     event.set_pressed(event_type == "_key_down");
                                     event.set_shift_pressed(json_value.get("shift").and_then(|v| v.as_bool()).unwrap_or(false));
                                     event.set_ctrl_pressed(json_value.get("ctrl").and_then(|v| v.as_bool()).unwrap_or(false));
                                     event.set_alt_pressed(json_value.get("alt").and_then(|v| v.as_bool()).unwrap_or(false));
                                     event.set_meta_pressed(json_value.get("meta").and_then(|v| v.as_bool()).unwrap_or(false));
-                                    
+
                                     if let Some(mut viewport) = base.get_viewport() {
                                         viewport.push_input(&event);
                                     }
                                     return;
                                 },
-                                
+
                                 _ => {}
                             }
                         }
                     }
-                    
-                    base.call_deferred("emit_signal", &["ipc_message".to_variant(), body.to_variant()]); 
+
+                    base.call_deferred("emit_signal", &["ipc_message".to_variant(), body.to_variant()]);
                 }
             })
             .with_on_page_load_handler({
@@ -491,11 +479,8 @@ impl WebView {
         let webview = match webview_builder.build_as_child(&window) {
             Ok(webview) => webview,
             Err(e) => {
-                // Fail completely and cleanly -- nothing below this point has
-                // run yet, so no HWND styles/overlay flags have been touched
-                // and no input is left silently blocked. Just mark pending
-                // so update_webview() retries next frame the window isn't
-                // minimized, instead of leaving a half-initialized node.
+                // Nothing past this point has run (no HWND styles or overlay flags
+                // touched), so a retry on the next frame starts from a clean state.
                 if !self.webview_creation_failed_logged {
                     wry_warn!("Failed to create webview, will retry: {:?}", e);
                     self.webview_creation_failed_logged = true;
@@ -536,13 +521,10 @@ impl WebView {
         }
 
         self.webview.replace(webview);
-        // Don't trust desired_visible here -- if creation was deferred
-        // (window was minimized), any set_visible()/hide()/show() call
-        // that happened in the meantime fired "visibility_changed" before
-        // create_webview() below ever connected to it, so that signal is
-        // permanently lost. is_visible_in_tree() reflects the CURRENT,
-        // engine-tracked state regardless of when it last changed, so
-        // sync from that instead the moment the webview actually exists.
+        // Sync from the engine's current state rather than desired_visible: if
+        // creation was deferred, visibility_changed fired before create_webview()
+        // connected to it and that signal is lost. is_visible_in_tree() is always
+        // current.
         let should_be_visible = self.base().is_visible_in_tree();
         if let Some(webview) = &self.webview {
             match webview.set_visible(should_be_visible) {
@@ -550,18 +532,13 @@ impl WebView {
                 Err(e) => wry_warn!("build_webview(): failed to sync visibility={}: {}", should_be_visible, e),
             }
 
-            // WebView2's controller construction can silently steal OS
-            // input focus for its own HWND, even when we just set it
-            // invisible above -- hiding a window doesn't hand focus back.
-            // Without this, the game window is left unfocused until the
-            // user manually alt-tabs away and back. If the webview isn't
-            // supposed to be visible/focused right now, explicitly return
-            // focus to the parent (game) window immediately.
+            // WebView2 construction can steal OS focus even when the webview is
+            // hidden, leaving the game window unfocused. Hand focus back unless
+            // this webview is meant to be focused on creation.
             if !should_be_visible || !self.focused_when_created {
-                // Defer to avoid reentrant bind_mut() panic: build_webview() holds &mut self
-                // (via process() → update_webview() → create_webview()), so base_mut() would
-                // double-borrow and panic. base().clone() takes only an immutable borrow and
-                // returns an owned Gd<WebView> that can call call_deferred() safely.
+                // Deferred: build_webview() runs with &mut self held (process() ->
+                // update_webview() -> create_webview()), so calling back into the
+                // node directly would double-borrow and panic.
                 self.base().clone().call_deferred("focus_parent", &[]);
                 wry_debug!("build_webview(): deferred OS focus return to parent window (should_be_visible={})", should_be_visible);
             }
@@ -569,10 +546,7 @@ impl WebView {
         self.resize();
         self.apply_z_order();
 
-        // Replay a load_url()/load_html() that arrived while construction
-        // was still pending -- otherwise the webview comes up visible but
-        // stuck on the default blank page forever, since that call was
-        // silently dropped rather than queued.
+        // Replay a load that was requested while construction was pending.
         if let Some(pending) = self.pending_load.take() {
             if let Some(webview) = &self.webview {
                 match pending {
@@ -614,11 +588,7 @@ impl WebView {
                 if let RawWindowHandle::Win32(win32) = wh.as_raw() {
                     let hwnd = win32.hwnd.get() as isize;
 
-                    unsafe {
-                        let raw_hwnd = HWND(hwnd as _);
-                        let current_style = GetWindowLongPtrA(raw_hwnd, GWL_STYLE);
-                        SetWindowLongPtrA(raw_hwnd, GWL_STYLE, current_style & !0x02000000);
-                    };
+                    strip_parent_clip_children(new_window_id);
 
                     if self.webview.as_ref().unwrap().reparent(hwnd).is_ok() {
                         self.window_id = new_window_id;
@@ -634,6 +604,7 @@ impl WebView {
         self.build_webview();
     }
 
+    /// Sends `message` to the page as a `message` CustomEvent on `document` (`event.detail`).
     #[func]
     fn post_message(&self, message: GString) {
         if let Some(webview) = &self.webview {
@@ -643,6 +614,7 @@ impl WebView {
         }
     }
 
+    /// Re-applies the native webview bounds from the control's rect (or the full window).
     #[func]
     fn resize(&self) {
         if let Some(webview) = &self.webview {
@@ -688,6 +660,7 @@ impl WebView {
         (1.0, 1.0)
     }
 
+    /// Runs JavaScript in the page.
     #[func]
     fn eval(&self, script: GString) {
         if let Some(webview) = &self.webview {
@@ -695,6 +668,7 @@ impl WebView {
         }
     }
 
+    /// Syncs the native webview with the control's `is_visible_in_tree()`. Connected to `visibility_changed`.
     #[func]
     fn update_visibility(&self) {
         if let Some(webview) = &self.webview {
@@ -703,15 +677,13 @@ impl WebView {
                 Ok(_) => {
                     wry_debug!("update_visibility(): visibility_changed fired, synced to {}", visibility);
                     if !visibility {
-                        // Defer to avoid reentrant bind_mut() panic when
-                        // focus_parent() triggers a Godot callback during
-                        // visibility_changed signal dispatch.
+                        // Deferred: focus_parent() can trigger Godot callbacks while
+                        // visibility_changed is still being dispatched (reentrant borrow).
                         self.base().clone().call_deferred("focus_parent", &[]);
                     } else if !self.overlay {
-                        // Showing a webview (usually from a key press) moves
-                        // input to it, so the key-up never reaches Godot.
-                        // Deferred so release handlers don't re-enter the
-                        // Lua callback that triggered this.
+                        // Showing a webview (usually via a key press) moves OS input to
+                        // it, so the matching key-up never reaches Godot. Release held
+                        // input; deferred to avoid re-entering the calling Lua callback.
                         queue_release_held_input(self.base().get_global_mouse_position());
                     }
                     self.resize();
@@ -726,11 +698,11 @@ impl WebView {
         }
     }
 
+    /// Shows or hides the native webview directly and records the request.
     #[func]
     fn set_visible(&mut self, visibility: bool) {
-        // Always record intent, even if the native webview doesn't exist
-        // yet (creation pending/minimized) -- it gets applied as soon as
-        // build_webview() finishes constructing it.
+        // Always record the request; build_webview() applies it if the native
+        // webview doesn't exist yet.
         self.desired_visible = visibility;
         if let Some(webview) = &self.webview {
             match webview.set_visible(visibility) {
@@ -742,15 +714,15 @@ impl WebView {
         }
     }
 
-    // client.lua toggles via `set_visible(not is_visible())`. This must
-    // mirror desired_visible (not Godot's own Control::is_visible(), which
-    // set_visible() above never touches) or the toggle desyncs from the
-    // webview's actual shown/hidden state.
+    // Returns the state requested via set_visible(), not Control::is_visible(),
+    // which set_visible() never touches. Scripts that toggle with
+    // `set_visible(not is_visible())` rely on these staying in sync.
     #[func]
     fn is_visible(&self) -> bool {
         self.desired_visible
     }
 
+    /// Loads raw HTML. Deferred until the native webview exists.
     #[func]
     fn load_html(&mut self, html: GString) {
         let html_str = String::from(html);
@@ -762,13 +734,15 @@ impl WebView {
         }
     }
 
+    /// Loads a URL. `res://` paths are mapped to the platform's custom-protocol form.
+    /// Deferred until the native webview exists.
     #[func]
     fn load_url(&mut self, url: GString) {
         let mut url_str = String::from(url);
 
         if let Some(stripped) = url_str.strip_prefix("res://") {
             let path = stripped.replace("\\", "/");
-            
+
             #[cfg(target_os = "linux")]
             {
                 url_str = format!("res://{}", path);
@@ -817,6 +791,7 @@ impl WebView {
         false
     }
 
+    /// Gives OS focus to the webview, releasing any held game input on the first call.
     #[func]
     fn focus(&self) {
         if let Some(webview) = &self.webview {
@@ -827,6 +802,7 @@ impl WebView {
         }
     }
 
+    /// Returns OS focus to the Godot window.
     #[func]
     fn focus_parent(&self) {
         if let Some(webview) = &self.webview {
@@ -875,11 +851,11 @@ impl WebView {
                 for i in 0..all_webviews.len() {
                     let node = all_webviews.get(i);
                     if let Some(node) = node {
-                    if let Ok(wv) = node.try_cast::<WebView>() {
-                        if wv.instance_id() != self.base().instance_id() {
-                            siblings.push(wv);
+                        if let Ok(wv) = node.try_cast::<WebView>() {
+                            if wv.instance_id() != self.base().instance_id() {
+                                siblings.push(wv);
+                            }
                         }
-                    }
                     }
                 }
             }
@@ -923,6 +899,34 @@ impl WebView {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = all;
+        }
+    }
+}
+
+/// Clears WS_CLIPCHILDREN on a Godot window so transparent webviews can show the
+/// game rendering behind them.
+///
+/// With the flag set, the parent window doesn't draw beneath its child HWNDs, and a
+/// "transparent" WebView2 shows an opaque backdrop instead of the game. Godot
+/// re-applies its own window style (flag included) whenever the window mode,
+/// borderless flag or size changes, so this runs on creation, on reparent, and every
+/// frame from update_webview().
+#[cfg(target_os = "windows")]
+fn strip_parent_clip_children(window_id: i32) {
+    const WS_CLIPCHILDREN_BIT: isize = 0x02000000;
+    let handle = DisplayServer::singleton()
+        .window_get_native_handle_ex(HandleType::WINDOW_HANDLE)
+        .window_id(window_id)
+        .done();
+    if handle == 0 {
+        return;
+    }
+    unsafe {
+        let hwnd = HWND(handle as _);
+        let style = GetWindowLongPtrA(hwnd, GWL_STYLE);
+        if style & WS_CLIPCHILDREN_BIT != 0 {
+            SetWindowLongPtrA(hwnd, GWL_STYLE, style & !WS_CLIPCHILDREN_BIT);
+            wry_debug!("strip_parent_clip_children(): WS_CLIPCHILDREN was re-applied on window_id={}, stripped again", window_id);
         }
     }
 }

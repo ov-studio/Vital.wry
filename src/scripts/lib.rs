@@ -1,5 +1,3 @@
-//! Vital.wry: a Godot `WebView` control backed by `wry` (WebView2 / WebKit).
-//!
 //! The native webview is a child window of the Godot window. It is created in `ready()`
 //! (deferred while the window is minimized), kept in sync with the control's rect and
 //! visibility every frame, and ordered against other webviews via `window_z_index`.

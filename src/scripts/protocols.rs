@@ -147,7 +147,7 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
         });
 }
 
-/// File extension -> `Content-Type`. Unknown extensions fall back to `application/octet-stream`.
+// File extension -> `Content-Type`. Unknown extensions fall back to `application/octet-stream`.
 lazy_static! {
     static ref MIME_TYPES: HashMap<&'static str, &'static str> = HashMap::from([
         // Source: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/MIME_types/Common_types

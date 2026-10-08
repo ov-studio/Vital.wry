@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 lazy_static! {
+    /// Mouse buttons currently held, tracked across forwarded webview mouse events.
     pub static ref CURRENT_BUTTON_MASK: Mutex<MouseButtonMask> = Mutex::new(MouseButtonMask::default());
 
+    /// Maps JavaScript `KeyboardEvent.key` values to Godot keycodes.
     pub static ref GODOT_KEYS: HashMap<&'static str, Key> = HashMap::from([
         ("a", Key::A),
         ("A", Key::A),

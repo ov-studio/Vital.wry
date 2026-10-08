@@ -8,6 +8,12 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Serves `res://` project files to the webview (custom protocol handler).
+///
+/// - A directory path resolves to its `index.html`; without a trailing slash the
+///   response is a JS redirect to the slashed URL so relative assets resolve.
+/// - Supports single `Range` requests (206 / 416).
+/// - Responds 404 for missing files and 500 if the file cannot be opened.
 pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     let root = PathBuf::from("res://");
     let uri = request.uri().clone();
@@ -78,14 +84,13 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
         .map(|mut file| {
             let file_size: u64 = file.get_length().try_into().expect("failed to get file size");
 
-            // The client might request a file with Range,
-            // even if we set Accept-Ranges to none, Safari does this while loading media types.
-            // So, we MUST implement the Content-Range logic to serve the file correctly.
+            // Range requests must be honoured: Safari sends them for media even when
+            // Accept-Ranges is not advertised.
             let mut content_range: Option<(u64, u64)> = None;
             if let Some(range) = request.headers().get(RANGE) {
                 let range_str = range.to_str().expect("failed to parse Range header");
 
-                // the range header might be in the format "bytes=start-end", "bytes=start-", or "bytes=-end"
+                // Expected forms: "bytes=start-end" or "bytes=start-".
                 let parts: Vec<&str> = range_str[6..].split('-').collect();
                 let start = parts[0].parse::<u64>().unwrap_or(0);
                 let end = parts[1].parse::<u64>().unwrap_or(file_size - 1);
@@ -98,7 +103,7 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
                         .header(CONTENT_TYPE, *content_type)
                         .header(ACCEPT_RANGES, "bytes")
                         .header(CONTENT_RANGE, format!("bytes */{}", file_size))
-                        .status(416) // Range Not Satisfiable
+                        .status(416)
                         .body(Cow::from(Vec::new()))
                         .expect("Failed to build 416 response");
                 }
@@ -138,13 +143,14 @@ pub fn get_res_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]
                         .as_bytes()
                         .to_vec(),
                 ))
-                .expect("Failed to build 404 response")
+                .expect("Failed to build 500 response")
         });
 }
 
+/// File extension -> `Content-Type`. Unknown extensions fall back to `application/octet-stream`.
 lazy_static! {
     static ref MIME_TYPES: HashMap<&'static str, &'static str> = HashMap::from([
-        // https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/MIME_types/Common_types
+        // Source: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/MIME_types/Common_types
         ("aac", "audio/aac"),
         ("abw", "application/x-abiword"),
         ("apng", "image/apng"),

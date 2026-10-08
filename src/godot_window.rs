@@ -23,17 +23,21 @@ use {
     raw_window_handle::{XlibWindowHandle},
 };
 
+/// Adapter exposing a Godot window's native handle to `wry` through
+/// `raw_window_handle`, so a webview can be attached as a child of that window.
 pub struct GodotWindow {
     pub window_id: i32,
 }
 
 impl GodotWindow {
+    /// `window_id` is the Godot `DisplayServer` window id.
     pub fn new(window_id: i32) -> Self {
         Self { window_id }
     }
 }
 
 impl HasWindowHandle for GodotWindow {
+    // Win32: HWND of the Godot window.
     #[cfg(target_os = "windows")]
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let display_server = DisplayServer::singleton();
@@ -48,6 +52,7 @@ impl HasWindowHandle for GodotWindow {
         }
     }
 
+    // macOS: NSView of the Godot window.
     #[cfg(target_os = "macos")]
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let display_server = DisplayServer::singleton();
@@ -62,6 +67,8 @@ impl HasWindowHandle for GodotWindow {
         }
     }
 
+    // Linux: X11 only (GDK must use the X11 backend). The window's event mask is
+    // narrowed so the webview child can be embedded without redirect conflicts.
     #[cfg(target_os = "linux")]
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         use gtk::gdk::prelude::DisplayExtManual;

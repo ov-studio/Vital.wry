@@ -296,13 +296,6 @@ impl WebView {
         resolved_data_directory.push("webview");
         std::fs::create_dir_all(&resolved_data_directory).ok();
 
-        // WebView2: force transparent default page color before controller creation.
-        // Without this, DefaultBackgroundColor stays white/opaque and console/mainmenu
-        // overlays show a solid fill instead of the game behind them.
-        if self.transparent {
-            std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00FFFFFF");
-        }
-
         let mut context = WebContext::new(Some(resolved_data_directory));
         let mut webview_builder = WebViewBuilder::new_with_web_context(&mut context)
             .with_transparent(self.transparent)

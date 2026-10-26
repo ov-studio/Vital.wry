@@ -297,7 +297,8 @@ impl WebView {
             .with_incognito(self.incognito)
             .with_focused(self.focused_when_created)
             .with_autoplay(self.autoplay)
-            .with_accept_first_mouse(true);
+            .with_accept_first_mouse(true)
+            .with_initialization_script(if self.full_window_size { "window.__vital_fullscreen = true;" } else { "window.__vital_fullscreen = false;" });
 
         if self.html.is_empty() {
             webview_builder = webview_builder.with_url(String::from(&self.url));

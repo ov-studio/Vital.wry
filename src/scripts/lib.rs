@@ -30,7 +30,7 @@ use {
     raw_window_handle::{HasWindowHandle, RawWindowHandle},
     windows::Win32::Foundation::HWND,
     windows::Win32::UI::WindowsAndMessaging::{
-        EnumChildWindows, GetWindowLongPtrA, SetWindowLongPtrA, SetWindowPos,
+        EnumChildWindows, GetClientRect, GetWindowLongPtrA, SetWindowLongPtrA, SetWindowPos,
         GWL_STYLE, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
     },
     wry::WebViewExtWindows,
@@ -56,6 +56,7 @@ struct WebView {
     previous_global_position: Vector2,
     previous_viewport_size: Vector2i,
     previous_window_position: Vector2i,
+    previous_client_size: Vector2i,
     previous_content_scale_factor: f32,
     #[export]
     #[var(get = get_window_z_index, set = set_window_z_index)]
@@ -123,6 +124,7 @@ impl IControl for WebView {
             previous_global_position: Vector2::default(),
             previous_viewport_size: Vector2i::default(),
             previous_window_position: Vector2i::default(),
+            previous_client_size: Vector2i::default(),
             previous_content_scale_factor: 1.0,
             window_z_index: 0,
             full_window_size: true,
@@ -225,7 +227,9 @@ impl WebView {
             .map(|w| w.get_content_scale_factor())
             .unwrap_or(1.0);
 
+        let client_size = native_client_size(self.window_id).unwrap_or(viewport_size);
         let needs_resize = self.base().get_global_position() != self.previous_global_position
+            || client_size != self.previous_client_size
             || viewport_size != self.previous_viewport_size
             || window_position != self.previous_window_position
             || content_scale_factor != self.previous_content_scale_factor;
@@ -233,6 +237,7 @@ impl WebView {
         if needs_resize {
             self.previous_global_position = self.base().get_global_position();
             self.previous_viewport_size = viewport_size;
+            self.previous_client_size = client_size;
             self.previous_window_position = window_position;
             self.previous_content_scale_factor = content_scale_factor;
             self.resize();
@@ -617,12 +622,14 @@ impl WebView {
     fn resize(&self) {
         if let Some(webview) = &self.webview {
             let rect = if self.full_window_size {
-                let window_size = self.base().get_window()
+                let godot_size = self.base().get_window()
                     .map(|w| w.get_size())
                     .unwrap_or_else(|| {
                         self.base().get_tree()
                             .get_root().expect("Could not get viewport").get_size()
                     });
+                // Prefer the real client area so the webview always fills the window exactly.
+                let window_size = native_client_size(self.window_id).unwrap_or(godot_size);
                 Rect {
                     position: PhysicalPosition::new(0, 0).into(),
                     size: PhysicalSize::new(window_size.x, window_size.y).into(),
@@ -898,6 +905,32 @@ impl WebView {
         {
             let _ = all;
         }
+    }
+}
+
+/// Size of the parent window's actual client area in physical pixels (Windows); `None` elsewhere or on failure.
+fn native_client_size(window_id: i32) -> Option<Vector2i> {
+    #[cfg(target_os = "windows")]
+    {
+        let handle = DisplayServer::singleton()
+            .window_get_native_handle_ex(HandleType::WINDOW_HANDLE)
+            .window_id(window_id)
+            .done();
+        if handle == 0 {
+            return None;
+        }
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        let ok = unsafe { GetClientRect(HWND(handle as _), &mut rect) }.is_ok();
+        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+        if ok && w > 0 && h > 0 {
+            return Some(Vector2i::new(w, h));
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window_id;
+        None
     }
 }
 

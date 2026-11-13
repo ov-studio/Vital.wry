@@ -1,6 +1,7 @@
 //! The native webview is a child window of the Godot window. It is created in `ready()`
 //! (deferred while the window is minimized), kept in sync with the control's rect and
 //! visibility every frame, and ordered against other webviews via `window_z_index`.
+//! Transparent Linux views retain a native input child and present snapshots in Godot.
 //! Mouse/keyboard events from the page are forwarded to Godot as input events.
 
 #[macro_use]
@@ -8,6 +9,10 @@ mod macros;
 mod godot_window;
 mod keys;
 mod protocols;
+#[cfg(target_os = "linux")]
+mod linux_snapshot;
+#[cfg(target_os = "linux")]
+mod linux_composition;
 
 use godot::global::MouseButtonMask;
 use godot::init::*;
@@ -51,6 +56,8 @@ unsafe impl ExtensionLibrary for VitalWry {}
 #[class(base=Control)]
 struct WebView {
     base: Base<Control>,
+    #[cfg(target_os = "linux")]
+    composition: Option<linux_composition::Composition>,
     webview: Option<wry::WebView>,
     window_id: i32,
     previous_global_position: Vector2,
@@ -119,6 +126,8 @@ impl IControl for WebView {
     fn init(base: Base<Control>) -> Self {
         Self {
             base,
+            #[cfg(target_os = "linux")]
+            composition: None,
             webview: None,
             window_id: 0,
             previous_global_position: Vector2::default(),
@@ -167,6 +176,8 @@ impl IControl for WebView {
 
     fn process(&mut self, _delta: f64) {
         self.update_webview();
+        #[cfg(target_os = "linux")]
+        self.update_composition();
     }
 
     fn input(&mut self, event: Gd<InputEvent>) {
@@ -246,6 +257,20 @@ impl WebView {
         #[cfg(target_os = "linux")]
         while gtk::events_pending() {
             gtk::main_iteration_do(false);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn update_composition(&mut self) {
+        let visible = self.desired_visible && self.base().is_visible_in_tree();
+        let (position, size) = if self.full_window_size {
+            (Vector2::ZERO, self.base().get_viewport().unwrap().get_visible_rect().size)
+        } else {
+            (self.base().get_global_position(), self.base().get_size())
+        };
+        let scale = self.get_content_scale();
+        if let Some(composition) = &mut self.composition {
+            composition.update(position, size, self.window_z_index, visible, scale);
         }
     }
 
@@ -479,7 +504,24 @@ impl WebView {
             wry_error!("You have entered both a URL and HTML code. You may only enter one at a time.")
         }
 
-        let webview = match webview_builder.build_as_child(&window) {
+        #[cfg(target_os = "linux")]
+        let built = if self.transparent {
+            use raw_window_handle::HasWindowHandle;
+            let _ = window.window_handle();
+            let parent = display_server.window_get_native_handle_ex(HandleType::WINDOW_HANDLE)
+                .window_id(window_id).done();
+            linux_composition::Composition::build(webview_builder, parent as u64)
+                .map(|(webview, composition)| {
+                    self.base_mut().add_child(&composition.canvas);
+                    self.composition = Some(composition);
+                    webview
+                })
+        } else {
+            webview_builder.build_as_child(&window).map_err(|e| e.to_string())
+        };
+        #[cfg(not(target_os = "linux"))]
+        let built = webview_builder.build_as_child(&window);
+        let webview = match built {
             Ok(webview) => webview,
             Err(e) => {
                 // Nothing past this point has run (no HWND styles or overlay flags
@@ -603,6 +645,8 @@ impl WebView {
             wry_warn!("Native reparent failed, falling back to rebuild");
         }
 
+        #[cfg(target_os = "linux")]
+        self.composition.take();
         self.webview.take();
         self.build_webview();
     }
@@ -804,6 +848,8 @@ impl WebView {
                 queue_release_held_input(self.base().get_global_mouse_position());
             }
             let _ = webview.focus();
+            #[cfg(target_os = "linux")]
+            if let Some(composition) = &self.composition { composition.focus(false); }
         }
     }
 
@@ -812,6 +858,11 @@ impl WebView {
     fn focus_parent(&self) {
         if let Some(webview) = &self.webview {
             self.os_focused.set(false);
+            #[cfg(target_os = "linux")]
+            if let Some(composition) = &self.composition {
+                composition.focus(true);
+                return;
+            }
             let _ = webview.focus_parent();
         }
     }

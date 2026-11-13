@@ -1,0 +1,12 @@
+config_version=5
+[application]
+config/name="Vital.wry Linux minimal regression"
+run/main_scene="res://main.tscn"
+[display]
+window/size/viewport_width=960
+window/size/viewport_height=640
+window/size/window_width_override=960
+window/size/window_height_override=640
+window/subwindows/embed_subwindows=false
+[rendering]
+renderer/rendering_method="gl_compatibility"

@@ -1980,12 +1980,14 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vital_wry"
 version = "0.1.0"
 dependencies = [
+ "gdkx11",
  "godot",
  "gtk",
  "http",
  "lazy_static",
  "raw-window-handle",
  "serde_json",
+ "webkit2gtk",
  "windows",
  "wry",
  "x11-dl",

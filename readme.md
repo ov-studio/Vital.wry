@@ -37,3 +37,26 @@ Requires Python 3 and a Rust toolchain with the appropriate target for your plat
 | Linux (X11) | Supported | WebKitGTK |
 | Android | Planned | — |
 | iOS | Planned | — |
+
+### Transparent WebViews on Linux
+
+With `transparent = true`, X11/Xwayland uses XComposite to redirect the native
+child's drawing while retaining its input window. The transparent path uses
+WRY's existing `build_gtk()` API with an owned GTK child to keep hide/show and
+teardown under one owner. WebKitGTK snapshots supply
+premultiplied RGBA pixels to a Godot texture, so both OpenGL and Vulkan can
+compose transparent HTML over the continually rendered scene. No application
+bootstrap, helper binary or additional Godot API is needed. Install XComposite
+(e.g. `libxcomposite-dev` on Debian/Ubuntu) along with GTK 3 and WebKitGTK 4.1 to build.
+
+This path uses WebKit's software painter and asynchronous CPU image copies;
+video/WebGL and high-resolution animated pages may have different performance
+or availability from an accelerated native webview. Visible pages (including static pages) are copied at up to 30 Hz. One snapshot is
+pending at a time, bounded to 64 MiB; load, size and visibility changes cancel stale work.
+Opaque Linux WebViews and non-Linux platforms keep their existing native path.
+The snapshot layer is above the ordinary scene (CanvasLayer `1 + window_z_index`).
+Mixed opaque/transparent native windows, overlapping views with different input
+stacking, transformed controls and native Window destruction/reparenting need
+separate qualification. Native Wayland is not supported by this X11 path.
+
+See [the independent regression project](tests/linux-transparency/README.md).

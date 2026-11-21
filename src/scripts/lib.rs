@@ -396,10 +396,7 @@ impl WebView {
 
                                     let button_mask = CURRENT_BUTTON_MASK.lock().unwrap();
                                     event.set_button_mask(*button_mask);
-
-                                    if let Some(mut viewport) = base.get_viewport() {
-                                        viewport.push_input(&event);
-                                    }
+                                    Input::singleton().parse_input_event(&event);
                                     return;
                                 },
 
@@ -441,13 +438,16 @@ impl WebView {
                                     let polled = json_value.get("input").and_then(|v| v.as_bool()).unwrap_or(false);
 
                                     event.set_keycode(godot_key);
+                                    if polled { event.set_physical_keycode(godot_key); }
                                     event.set_pressed(event_type == "_key_down");
                                     event.set_shift_pressed(json_value.get("shift").and_then(|v| v.as_bool()).unwrap_or(false));
                                     event.set_ctrl_pressed(json_value.get("ctrl").and_then(|v| v.as_bool()).unwrap_or(false));
                                     event.set_alt_pressed(json_value.get("alt").and_then(|v| v.as_bool()).unwrap_or(false));
                                     event.set_meta_pressed(json_value.get("meta").and_then(|v| v.as_bool()).unwrap_or(false));
 
-                                    if let Some(mut viewport) = base.get_viewport() {
+                                    if polled {
+                                        Input::singleton().parse_input_event(&event);
+                                    } else if let Some(mut viewport) = base.get_viewport() {
                                         viewport.push_input(&event);
                                     }
                                     return;
@@ -973,6 +973,7 @@ fn queue_release_held_input(mouse_position: Vector2) {
             if !input.is_key_pressed(key) { continue; }
             let mut event = InputEventKey::new_gd();
             event.set_keycode(key);
+            event.set_physical_keycode(key);
             event.set_pressed(false);
             input.parse_input_event(&event);
         }

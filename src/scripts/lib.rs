@@ -438,6 +438,7 @@ impl WebView {
                                     let mut event = InputEventKey::new_gd();
 
                                     let godot_key = GODOT_KEYS.get(key_str).copied().unwrap_or(Key::NONE);
+                                    let polled = json_value.get("input").and_then(|v| v.as_bool()).unwrap_or(false);
 
                                     event.set_keycode(godot_key);
                                     event.set_pressed(event_type == "_key_down");

@@ -106,6 +106,9 @@ struct WebView {
     // focus_parent()). Held game input is released only on the game -> webview
     // transition, not on repeated focus() calls.
     os_focused: std::cell::Cell<bool>,
+    // Whether the page itself reports focus (window focus / blur events sent by Vital.kit). Unlike os_focused it also
+    // follows focus the user gave with a click, so hiding a webview only hands focus back when it actually had it.
+    page_focused: std::cell::Cell<bool>,
 }
 
 /// A load request made before the native webview existed.
@@ -147,6 +150,7 @@ impl IControl for WebView {
             desired_visible: true,
             pending_load: None,
             os_focused: std::cell::Cell::new(false),
+            page_focused: std::cell::Cell::new(false),
         }
     }
 
@@ -421,6 +425,12 @@ impl WebView {
                                     return;
                                 },
 
+                                "_focus" => {
+                                    let state = json_value.get("state").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    base.call_deferred("on_page_focus", &[state.to_variant()]);
+                                    return;
+                                },
+
                                 "_key_down" | "_key_up" => {
                                     let key_str = json_value.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     let mut event = InputEventKey::new_gd();
@@ -674,9 +684,13 @@ impl WebView {
                 Ok(_) => {
                     wry_debug!("update_visibility(): visibility_changed fired, synced to {}", visibility);
                     if !visibility {
+                        // Only a webview that holds the focus gives it back, otherwise hiding one webview would pull the
+                        // focus away from another one (a system UI such as the console) that is being used.
                         // Deferred: focus_parent() can trigger Godot callbacks while
                         // visibility_changed is still being dispatched (reentrant borrow).
-                        self.base().clone().call_deferred("focus_parent", &[]);
+                        if self.os_focused.get() || self.page_focused.get() {
+                            self.base().clone().call_deferred("focus_parent", &[]);
+                        }
                     } else if !self.overlay {
                         // Showing a webview (usually via a key press) moves OS input to
                         // it, so the matching key-up never reaches Godot. Release held
@@ -788,7 +802,6 @@ impl WebView {
         false
     }
 
-    /// Gives OS focus to the webview, releasing any held game input on the first call.
     #[func]
     fn focus(&self) {
         if let Some(webview) = &self.webview {
@@ -799,12 +812,20 @@ impl WebView {
         }
     }
 
-    /// Returns OS focus to the Godot window.
     #[func]
     fn focus_parent(&self) {
         if let Some(webview) = &self.webview {
             self.os_focused.set(false);
+            self.page_focused.set(false);
             let _ = webview.focus_parent();
+        }
+    }
+
+    #[func]
+    fn on_page_focus(&self, state: bool) {
+        self.page_focused.set(state);
+        if !state {
+            self.os_focused.set(false);
         }
     }
 

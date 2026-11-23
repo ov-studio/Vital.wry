@@ -299,6 +299,13 @@ impl WebView {
             .with_autoplay(self.autoplay)
             .with_accept_first_mouse(true);
 
+        // Windows: turns off WebView2's own accelerators (Alt+Left / Alt+Right back-forward, F5, Ctrl+R, Ctrl+P, ...)
+        #[cfg(target_os = "windows")]
+        {
+            use wry::WebViewBuilderExtWindows;
+            webview_builder = webview_builder.with_browser_accelerator_keys(false);
+        }
+
         if self.html.is_empty() {
             webview_builder = webview_builder.with_url(String::from(&self.url));
         }
@@ -344,13 +351,12 @@ impl WebView {
 
                                 "_mouse_down" | "_mouse_up" => {
                                     let button = json_value.get("button").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-
                                     let godot_button = match button {
                                         0 => MouseButton::LEFT,
                                         1 => MouseButton::MIDDLE,
                                         2 => MouseButton::RIGHT,
-                                        3 => MouseButton::WHEEL_UP,
-                                        4 => MouseButton::WHEEL_DOWN,
+                                        3 => MouseButton::XBUTTON1,
+                                        4 => MouseButton::XBUTTON2,
                                         _ => MouseButton::LEFT,
                                     };
 
@@ -359,33 +365,18 @@ impl WebView {
                                         MouseButton::LEFT => MouseButtonMask::LEFT,
                                         MouseButton::RIGHT => MouseButtonMask::RIGHT,
                                         MouseButton::MIDDLE => MouseButtonMask::MIDDLE,
+                                        MouseButton::XBUTTON1 => MouseButtonMask::MB_XBUTTON1,
+                                        MouseButton::XBUTTON2 => MouseButtonMask::MB_XBUTTON2,
                                         _ => MouseButtonMask::default(),
                                     };
 
-                                    if godot_button != MouseButton::WHEEL_UP && godot_button != MouseButton::WHEEL_DOWN {
+                                    {
                                         let mut button_mask = CURRENT_BUTTON_MASK.lock().unwrap();
-                                        if pressed {
-                                            *button_mask = *button_mask | mask;
+                                        *button_mask = if pressed {
+                                            *button_mask | mask
                                         } else {
-                                            match godot_button {
-                                                MouseButton::LEFT => {
-                                                    if button_mask.is_set(MouseButtonMask::LEFT) {
-                                                        *button_mask = MouseButtonMask::from_ord(button_mask.ord() & !MouseButtonMask::LEFT.ord());
-                                                    }
-                                                },
-                                                MouseButton::RIGHT => {
-                                                    if button_mask.is_set(MouseButtonMask::RIGHT) {
-                                                        *button_mask = MouseButtonMask::from_ord(button_mask.ord() & !MouseButtonMask::RIGHT.ord());
-                                                    }
-                                                },
-                                                MouseButton::MIDDLE => {
-                                                    if button_mask.is_set(MouseButtonMask::MIDDLE) {
-                                                        *button_mask = MouseButtonMask::from_ord(button_mask.ord() & !MouseButtonMask::MIDDLE.ord());
-                                                    }
-                                                },
-                                                _ => {}
-                                            }
-                                        }
+                                            MouseButtonMask::from_ord(button_mask.ord() & !mask.ord())
+                                        };
                                     }
 
                                     let mut event = InputEventMouseButton::new_gd();

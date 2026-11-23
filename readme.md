@@ -32,8 +32,8 @@ Requires Python 3 and a Rust toolchain with the appropriate target for your plat
 
 | Platform | Support | Web Engine |
 | --- | --- | --- |
-| Windows 10+ | Supported | WebView2 (Chromium) |
+| Windows 10+ | Supported | WebView2 |
 | macOS | Planned | WebKit |
 | Linux (X11) | Planned | WebKitGTK |
-| Android | Planned | — |
-| iOS | Planned | — |
+| Android | Planned | - |
+| iOS | Planned | - |

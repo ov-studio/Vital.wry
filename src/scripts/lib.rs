@@ -804,6 +804,9 @@ impl WebView {
 
     #[func]
     fn focus(&self) {
+        if !self.base().is_visible_in_tree() {
+            return;
+        }
         if let Some(webview) = &self.webview {
             if !self.os_focused.replace(true) && !self.overlay {
                 queue_release_held_input(self.base().get_global_mouse_position());
